@@ -1,26 +1,40 @@
-from django.http import HttpRequest, HttpResponse
-from django.shortcuts import render
+from django.contrib.auth import login
+from django.contrib.auth.forms import AuthenticationForm
+from django.http import HttpRequest, HttpResponse, HttpResponseNotAllowed
+from django.shortcuts import render, redirect
 
 
-def login(request: HttpRequest) -> HttpResponse:
+def login_view(request: HttpRequest) -> HttpResponse:
     if request.method == "GET":
-        # render login page
-        pass
+        form = AuthenticationForm()
+        return render(request, "auth_server/login.html", {"form": form})
+
     if request.method == "POST":
         # process the request form
-        pass
+        form = AuthenticationForm(request, data=request.POST)
+        if form.is_valid():
+            user = form.get_user()
+            login(request, user)
+            next_url = request.GET.get("next")
+            if next_url:
+                return redirect(next_url)
 
-    return HttpResponse("Not implemented", status=500)
+            return redirect("/")
+        else:
+            return render(request, "auth_server/login.html", {"form": form})
+
+    else:
+        return HttpResponseNotAllowed(["GET", "POST"])
 
 
 # Create your views here.
 def authorize(request: HttpRequest) -> HttpResponse:
     client_id = request.GET.get("client_id")
     redirect_uri = request.GET.get("redirect_uri")
-    response_code = request.GET.get("response_code")
+    response_type = request.GET.get("response_type")
 
     if request.method == "GET":
-        if 'sessionid' in request.COOKIES:
+        if request.user.is_authenticated:
             pass
             # Authorized -> redirect page
 
@@ -37,11 +51,6 @@ def authorize(request: HttpRequest) -> HttpResponse:
     return HttpResponse("Not implemented", status=500)
 
 
-# Purely for example. TODO: Remove when done with view implementation
-def check_session_cookie(request):
-    # Check if the 'sessionid' cookie exists in the request
-    if 'sessionid' in request.COOKIES:
-        session_key = request.COOKIES['sessionid']
-        return HttpResponse(f"Session cookie found! ID: {session_key}")
-    else:
-        return HttpResponse("No session cookie present.")
+def token(request: HttpRequest) -> HttpResponse:
+
+    return HttpResponse("Not implemented", status=500)
