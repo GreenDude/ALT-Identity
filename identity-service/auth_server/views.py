@@ -1,7 +1,10 @@
+import uuid
+
 from django.contrib.auth import login
 from django.contrib.auth.forms import AuthenticationForm
-from django.http import HttpRequest, HttpResponse, HttpResponseNotAllowed
+from django.http import HttpRequest, HttpResponse, HttpResponseNotAllowed, HttpResponseRedirect, JsonResponse
 from django.shortcuts import render, redirect
+from django.urls import reverse
 
 
 def login_view(request: HttpRequest) -> HttpResponse:
@@ -12,12 +15,14 @@ def login_view(request: HttpRequest) -> HttpResponse:
     if request.method == "POST":
         # process the request form
         form = AuthenticationForm(request, data=request.POST)
+
         if form.is_valid():
             user = form.get_user()
             login(request, user)
-            next_url = request.GET.get("next")
-            if next_url:
-                return redirect(next_url)
+
+            pending_authorization = request.session.pop("pending_authorization", None)
+            if pending_authorization:
+                return redirect(pending_authorization)
 
             return redirect("/")
         else:
@@ -27,28 +32,31 @@ def login_view(request: HttpRequest) -> HttpResponse:
         return HttpResponseNotAllowed(["GET", "POST"])
 
 
-# Create your views here.
-def authorize(request: HttpRequest) -> HttpResponse:
+def authorize(request: HttpRequest) -> HttpResponse | None | HttpResponseRedirect | HttpResponseNotAllowed:
     client_id = request.GET.get("client_id")
     redirect_uri = request.GET.get("redirect_uri")
     response_type = request.GET.get("response_type")
 
     if request.method == "GET":
         if request.user.is_authenticated:
-            pass
-            # Authorized -> redirect page
+            if not client_id:
+                return HttpResponse("Client ID not provided", status=400)
+            if response_type != "code":
+                return HttpResponse("Incorrect response type", status=400)
+            if not redirect_uri:
+                return HttpResponse("Redirect URL not provided", status=400)
 
-            # Not authorized -> Grant permission page
+            auth_code = uuid.uuid4().hex
+
+            return redirect(f"{redirect_uri}?code={auth_code}")
 
         else:
-            pass
+            # redirect to login page
+            request.session["pending_authorization"] = request.get_full_path()
+            return redirect(f"{reverse('login')}")
 
-
-        pass
-    elif request.method == "POST":
-
-        pass
-    return HttpResponse("Not implemented", status=500)
+    else:
+        return HttpResponseNotAllowed(["GET"])
 
 
 def token(request: HttpRequest) -> HttpResponse:
