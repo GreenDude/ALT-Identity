@@ -23,6 +23,8 @@ from urllib.request import Request, urlopen
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import render, redirect
 
+from config.http_logging import log_inbound_request, log_outbound_request, log_outbound_response, log_response
+
 
 def _generate_pkce_verifier() -> str:
     """Create a high-entropy PKCE code verifier for the demo client."""
@@ -37,11 +39,13 @@ def _generate_pkce_challenge(verifier: str) -> str:
 
 def index(request: HttpRequest) -> HttpResponse:
     """Render the landing page for the demo relying-party application."""
-    return render(request, 'aot/index.html')
+    log_inbound_request(request)
+    return log_response(render(request, 'aot/index.html'), source="aot.index")
 
 
 def aot_service(request: HttpRequest) -> HttpResponse:
     """Placeholder for future demo functionality beyond the profile example."""
+    log_inbound_request(request)
     if request.method == 'GET':
         if request.session.session_key:
             # Get access token from DB and request the needed stuff
@@ -53,33 +57,42 @@ def aot_service(request: HttpRequest) -> HttpResponse:
 
             pass
 
-        return render(request, 'aot/aot_service.html')
+        return log_response(render(request, 'aot/aot_service.html'), source="aot.aot_service")
 
-    return HttpResponse("Not implemented", status=501)
+    return log_response(HttpResponse("Not implemented", status=501), source="aot.aot_service")
 
 
 def aot_callback(request: HttpRequest) -> HttpResponse:
     """Exchange an authorization code for tokens and store them in the session."""
+    log_inbound_request(request)
     auth_code = request.GET.get("code")
     code_verifier = request.session.get("pkce_code_verifier")
     if not auth_code:
-        return HttpResponse("Missing authorization code", status=400)
+        return log_response(HttpResponse("Missing authorization code", status=400), source="aot.aot_callback")
     if not code_verifier:
-        return HttpResponse("Missing PKCE code verifier in session", status=400)
+        return log_response(
+            HttpResponse("Missing PKCE code verifier in session", status=400),
+            source="aot.aot_callback",
+        )
 
-    payload = urlencode(
-        {
-            "grant_type": "authorization_code",
-            "code": auth_code,
-            "client_id": "awesome-service",
-            "redirect_uri": "http://localhost:8000/callback",
-            "code_verifier": code_verifier,
-        }
-    ).encode("utf-8")
+    token_form_data = {
+        "grant_type": "authorization_code",
+        "code": auth_code,
+        "client_id": "awesome-service",
+        "redirect_uri": "http://localhost:8000/callback",
+        "code_verifier": code_verifier,
+    }
+    payload = urlencode(token_form_data).encode("utf-8")
     token_request = Request(
         "http://localhost:8000/auth/token",
         data=payload,
         method="POST",
+    )
+    log_outbound_request(
+        "POST",
+        "http://localhost:8000/auth/token",
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        body=token_form_data,
     )
 
     try:
@@ -90,24 +103,39 @@ def aot_callback(request: HttpRequest) -> HttpResponse:
         token_status = exc.code
         token_body = exc.read().decode("utf-8")
     except URLError as exc:
-        return HttpResponse(f"Unable to reach token endpoint: {exc.reason}", status=502)
+        return log_response(
+            HttpResponse(f"Unable to reach token endpoint: {exc.reason}", status=502),
+            source="aot.aot_callback",
+        )
+    log_outbound_response(
+        method="POST",
+        url="http://localhost:8000/auth/token",
+        status_code=token_status,
+        body=token_body,
+    )
 
     try:
         token_data = json.loads(token_body)
     except ValueError:
-        return HttpResponse(
-            f"Token endpoint returned non-JSON response:\n\n{token_body}",
-            status=token_status,
+        return log_response(
+            HttpResponse(
+                f"Token endpoint returned non-JSON response:\n\n{token_body}",
+                status=token_status,
+            ),
+            source="aot.aot_callback",
         )
 
     if token_status != 200:
-        return JsonResponse(token_data, status=token_status)
+        return log_response(
+            JsonResponse(token_data, status=token_status),
+            source="aot.aot_callback",
+        )
 
     request.session["access_token"] = token_data["access_token"]
     request.session["refresh_token"] = token_data.get("refresh_token")
     request.session.pop("pkce_code_verifier", None)
 
-    return redirect("aot_request_profile")
+    return log_response(redirect("aot_request_profile"), source="aot.aot_callback")
 
 
 def aot_request_profile(request: HttpRequest) -> HttpResponse:
@@ -116,13 +144,15 @@ def aot_request_profile(request: HttpRequest) -> HttpResponse:
     When no access token is present, or when the current token is rejected, the
     browser is sent back through the authorization flow to obtain a fresh code.
     """
+    log_inbound_request(request)
     access_token = request.session.get("access_token")
 
     if not access_token:
         code_verifier = _generate_pkce_verifier()
         request.session["pkce_code_verifier"] = code_verifier
         code_challenge = _generate_pkce_challenge(code_verifier)
-        return redirect(
+        return log_response(
+            redirect(
             "http://localhost:8000/auth/authorize"
             "?client_id=awesome-service"
             "&redirect_uri=http://localhost:8000/callback"
@@ -130,12 +160,19 @@ def aot_request_profile(request: HttpRequest) -> HttpResponse:
             "&scope=profile.read"
             f"&code_challenge={code_challenge}"
             "&code_challenge_method=S256"
+            ),
+            source="aot.aot_request_profile",
         )
 
     profile_request = Request(
         "http://localhost:8000/auth/profile",
         headers={"Authorization": f"Bearer {access_token}"},
         method="GET",
+    )
+    log_outbound_request(
+        "GET",
+        "http://localhost:8000/auth/profile",
+        headers={"Authorization": f"Bearer {access_token}"},
     )
 
     try:
@@ -146,7 +183,16 @@ def aot_request_profile(request: HttpRequest) -> HttpResponse:
         profile_status = exc.code
         profile_body = exc.read().decode("utf-8")
     except URLError as exc:
-        return HttpResponse(f"Unable to reach profile endpoint: {exc.reason}", status=502)
+        return log_response(
+            HttpResponse(f"Unable to reach profile endpoint: {exc.reason}", status=502),
+            source="aot.aot_request_profile",
+        )
+    log_outbound_response(
+        method="GET",
+        url="http://localhost:8000/auth/profile",
+        status_code=profile_status,
+        body=profile_body,
+    )
 
     if profile_status == 401:
         request.session.pop("access_token", None)
@@ -155,7 +201,8 @@ def aot_request_profile(request: HttpRequest) -> HttpResponse:
         request.session["pkce_code_verifier"] = code_verifier
         code_challenge = _generate_pkce_challenge(code_verifier)
 
-        return redirect(
+        return log_response(
+            redirect(
             "http://localhost:8000/auth/authorize"
             "?client_id=awesome-service"
             "&redirect_uri=http://localhost:8000/callback"
@@ -163,23 +210,31 @@ def aot_request_profile(request: HttpRequest) -> HttpResponse:
             "&scope=profile.read"
             f"&code_challenge={code_challenge}"
             "&code_challenge_method=S256"
+            ),
+            source="aot.aot_request_profile",
         )
 
     try:
         profile_data = json.loads(profile_body)
     except ValueError:
-        return HttpResponse(
-            f"Profile endpoint returned non-JSON response:\n\n{profile_body}",
-            status=profile_status,
+        return log_response(
+            HttpResponse(
+                f"Profile endpoint returned non-JSON response:\n\n{profile_body}",
+                status=profile_status,
+            ),
+            source="aot.aot_request_profile",
         )
 
-    return render(
-        request,
-        "aot/profile.html",
-        {
-            "profile_data": profile_data,
-            "formatted_json": json.dumps(profile_data, indent=2, sort_keys=True),
-            "response_status": profile_status,
-        },
-        status=profile_status,
+    return log_response(
+        render(
+            request,
+            "aot/profile.html",
+            {
+                "profile_data": profile_data,
+                "formatted_json": json.dumps(profile_data, indent=2, sort_keys=True),
+                "response_status": profile_status,
+            },
+            status=profile_status,
+        ),
+        source="aot.aot_request_profile",
     )

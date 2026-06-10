@@ -1,4 +1,5 @@
 from urllib.parse import parse_qs, urlparse
+from urllib.error import HTTPError
 from unittest.mock import MagicMock, patch
 
 from django.test import Client, TestCase
@@ -49,3 +50,44 @@ class AotRequestProfileViewTests(TestCase):
             query["code_challenge"],
             [_generate_pkce_challenge(verifier)],
         )
+
+    @patch("aot.views.urlopen")
+    def test_profile_forbidden_is_rendered_without_restart_flow(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.side_effect = HTTPError(
+            url="http://localhost:8000/auth/profile",
+            code=403,
+            msg="Forbidden",
+            hdrs=None,
+            fp=MagicMock(read=MagicMock(return_value=b'{"error": "forbidden"}')),
+        )
+
+        response = self.client.get(reverse("aot_request_profile"))
+
+        self.assertEqual(response.status_code, 403)
+        self.assertTemplateUsed(response, "aot/profile.html")
+        self.assertContains(response, "forbidden", status_code=403)
+        self.assertEqual(self.client.session.get("access_token"), "test-access-token")
+
+
+class AotCallbackTests(TestCase):
+    def setUp(self) -> None:
+        self.client = Client()
+        session = self.client.session
+        session["pkce_code_verifier"] = "verifier-123"
+        session.save()
+
+    @patch("aot.views.urlopen")
+    def test_token_exchange_failure_returns_error_json(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.side_effect = HTTPError(
+            url="http://localhost:8000/auth/token",
+            code=400,
+            msg="Bad Request",
+            hdrs=None,
+            fp=MagicMock(read=MagicMock(return_value=b'{"error": "invalid_grant"}')),
+        )
+
+        response = self.client.get(reverse("aot_callback"), {"code": "bad-code"})
+
+        self.assertEqual(response.status_code, 400)
+        self.assertJSONEqual(response.content, {"error": "invalid_grant"})
+        self.assertEqual(self.client.session.get("pkce_code_verifier"), "verifier-123")
