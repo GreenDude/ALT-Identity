@@ -22,6 +22,7 @@ from urllib.request import Request, urlopen
 
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import render, redirect
+from django.urls import reverse
 
 from config.http_logging import log_inbound_request, log_outbound_request, log_outbound_response, log_response
 
@@ -35,6 +36,26 @@ def _generate_pkce_challenge(verifier: str) -> str:
     """Create an RFC 7636 S256 code challenge from a verifier."""
     digest = sha256(verifier.encode("ascii")).digest()
     return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+
+
+def _build_absolute_url(request: HttpRequest, route_name: str) -> str:
+    """Build an absolute URL for the current host and a named route."""
+    return request.build_absolute_uri(reverse(route_name))
+
+
+def _build_authorize_redirect_url(request: HttpRequest, code_challenge: str) -> str:
+    """Build the authorization redirect URL using the current request host."""
+    query = urlencode(
+        {
+            "client_id": "awesome-service",
+            "redirect_uri": _build_absolute_url(request, "aot_callback"),
+            "response_type": "code",
+            "scope": "profile.read",
+            "code_challenge": code_challenge,
+            "code_challenge_method": "S256",
+        }
+    )
+    return f"{_build_absolute_url(request, 'authorize')}?{query}"
 
 
 def index(request: HttpRequest) -> HttpResponse:
@@ -75,22 +96,23 @@ def aot_callback(request: HttpRequest) -> HttpResponse:
             source="aot.aot_callback",
         )
 
+    token_endpoint_url = _build_absolute_url(request, "token")
     token_form_data = {
         "grant_type": "authorization_code",
         "code": auth_code,
         "client_id": "awesome-service",
-        "redirect_uri": "http://localhost:8000/callback",
+        "redirect_uri": _build_absolute_url(request, "aot_callback"),
         "code_verifier": code_verifier,
     }
     payload = urlencode(token_form_data).encode("utf-8")
     token_request = Request(
-        "http://localhost:8000/auth/token",
+        token_endpoint_url,
         data=payload,
         method="POST",
     )
     log_outbound_request(
         "POST",
-        "http://localhost:8000/auth/token",
+        token_endpoint_url,
         headers={"Content-Type": "application/x-www-form-urlencoded"},
         body=token_form_data,
     )
@@ -109,7 +131,7 @@ def aot_callback(request: HttpRequest) -> HttpResponse:
         )
     log_outbound_response(
         method="POST",
-        url="http://localhost:8000/auth/token",
+        url=token_endpoint_url,
         status_code=token_status,
         body=token_body,
     )
@@ -152,26 +174,19 @@ def aot_request_profile(request: HttpRequest) -> HttpResponse:
         request.session["pkce_code_verifier"] = code_verifier
         code_challenge = _generate_pkce_challenge(code_verifier)
         return log_response(
-            redirect(
-            "http://localhost:8000/auth/authorize"
-            "?client_id=awesome-service"
-            "&redirect_uri=http://localhost:8000/callback"
-            "&response_type=code"
-            "&scope=profile.read"
-            f"&code_challenge={code_challenge}"
-            "&code_challenge_method=S256"
-            ),
+            redirect(_build_authorize_redirect_url(request, code_challenge)),
             source="aot.aot_request_profile",
         )
 
+    profile_endpoint_url = _build_absolute_url(request, "profile")
     profile_request = Request(
-        "http://localhost:8000/auth/profile",
+        profile_endpoint_url,
         headers={"Authorization": f"Bearer {access_token}"},
         method="GET",
     )
     log_outbound_request(
         "GET",
-        "http://localhost:8000/auth/profile",
+        profile_endpoint_url,
         headers={"Authorization": f"Bearer {access_token}"},
     )
 
@@ -189,7 +204,7 @@ def aot_request_profile(request: HttpRequest) -> HttpResponse:
         )
     log_outbound_response(
         method="GET",
-        url="http://localhost:8000/auth/profile",
+        url=profile_endpoint_url,
         status_code=profile_status,
         body=profile_body,
     )
@@ -202,15 +217,7 @@ def aot_request_profile(request: HttpRequest) -> HttpResponse:
         code_challenge = _generate_pkce_challenge(code_verifier)
 
         return log_response(
-            redirect(
-            "http://localhost:8000/auth/authorize"
-            "?client_id=awesome-service"
-            "&redirect_uri=http://localhost:8000/callback"
-            "&response_type=code"
-            "&scope=profile.read"
-            f"&code_challenge={code_challenge}"
-            "&code_challenge_method=S256"
-            ),
+            redirect(_build_authorize_redirect_url(request, code_challenge)),
             source="aot.aot_request_profile",
         )
 

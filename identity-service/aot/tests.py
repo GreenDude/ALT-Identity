@@ -2,12 +2,13 @@ from urllib.parse import parse_qs, urlparse
 from urllib.error import HTTPError
 from unittest.mock import MagicMock, patch
 
-from django.test import Client, TestCase
+from django.test import Client, TestCase, override_settings
 from django.urls import reverse
 
 from aot.views import _generate_pkce_challenge
 
 
+@override_settings(ALLOWED_HOSTS=["127.0.0.1", "testserver"])
 class AotRequestProfileViewTests(TestCase):
     def setUp(self) -> None:
         self.client = Client()
@@ -51,6 +52,20 @@ class AotRequestProfileViewTests(TestCase):
             [_generate_pkce_challenge(verifier)],
         )
 
+    def test_missing_access_token_keeps_current_host_in_authorize_flow(self) -> None:
+        client = Client()
+
+        response = client.get(
+            reverse("aot_request_profile"),
+            HTTP_HOST="127.0.0.1:8000",
+        )
+
+        parsed = urlparse(response["Location"])
+        query = parse_qs(parsed.query)
+
+        self.assertEqual(parsed.netloc, "127.0.0.1:8000")
+        self.assertEqual(query["redirect_uri"], ["http://127.0.0.1:8000/callback"])
+
     @patch("aot.views.urlopen")
     def test_profile_forbidden_is_rendered_without_restart_flow(self, mock_urlopen: MagicMock) -> None:
         mock_urlopen.side_effect = HTTPError(
@@ -69,6 +84,7 @@ class AotRequestProfileViewTests(TestCase):
         self.assertEqual(self.client.session.get("access_token"), "test-access-token")
 
 
+@override_settings(ALLOWED_HOSTS=["127.0.0.1", "testserver"])
 class AotCallbackTests(TestCase):
     def setUp(self) -> None:
         self.client = Client()
@@ -91,3 +107,25 @@ class AotCallbackTests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertJSONEqual(response.content, {"error": "invalid_grant"})
         self.assertEqual(self.client.session.get("pkce_code_verifier"), "verifier-123")
+
+    @patch("aot.views.urlopen")
+    def test_callback_uses_current_host_for_token_exchange(self, mock_urlopen: MagicMock) -> None:
+        mock_response = MagicMock()
+        mock_response.__enter__.return_value.status = 200
+        mock_response.__enter__.return_value.read.return_value = (
+            b'{"access_token": "abc", "refresh_token": "def"}'
+        )
+        mock_urlopen.return_value = mock_response
+
+        response = self.client.get(
+            reverse("aot_callback"),
+            {"code": "good-code"},
+            HTTP_HOST="127.0.0.1:8000",
+        )
+
+        self.assertEqual(response.status_code, 302)
+        request_object = mock_urlopen.call_args[0][0]
+        posted_data = parse_qs(request_object.data.decode("utf-8"))
+
+        self.assertEqual(request_object.full_url, "http://127.0.0.1:8000/auth/token")
+        self.assertEqual(posted_data["redirect_uri"], ["http://127.0.0.1:8000/callback"])
