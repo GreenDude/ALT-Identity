@@ -14,14 +14,15 @@ The repository includes both sides of the flow:
 
 - `auth_server`: a compact identity provider with login, authorization, token,
   logout, and profile endpoints.
-- `aot`: a demo relying-party client that drives the authorization-code flow and
+- `aot`: the bundled demo client that drives the authorization-code flow and
   renders the resulting profile response as a readable HTML page.
 
 ## What This Project Is Good For
 
 - Prototyping applications that need a login and token exchange flow.
 - Exercising browser redirects and callback handling in local development.
-- Writing end-to-end or Selenium tests against a stable, controllable auth flow.
+- Writing end-to-end browser automation tests, including Selenium-based tests,
+  against a stable, controllable auth flow.
 - Demonstrating the basics of an OAuth 2.0 / OIDC-style authorization-code flow.
 
 ## What This Project Is Not
@@ -94,7 +95,7 @@ ALT-Identity/
    configured callback.
 5. The callback exchanges the authorization code at `/auth/token` using the
    original `code_verifier`.
-6. The demo client stores the returned tokens in session and requests
+6. The bundled demo client stores the returned tokens in session and requests
    `/auth/profile` with a bearer token.
 7. The profile response is rendered as HTML for humans and automation tooling.
 
@@ -109,11 +110,15 @@ More detail is in [docs/architecture.md](docs/architecture.md).
 
 ### Install
 
+The identity service logic lives in this repository. There is not a separate
+published package to install from PyPI; instead, install this project and its
+declared dependencies locally.
+
 ```bash
 cd /Users/cloudraccoon/PycharmProjects/ALT-Identity
 python3 -m venv .venv
 source .venv/bin/activate
-pip install "django>=6.0.6"
+pip install -e .
 ```
 
 ### Initialize the database
@@ -150,7 +155,7 @@ Open [http://localhost:8000/](http://localhost:8000/).
 
 ### Logging
 
-ALT-Identity logs handled requests, returned responses, and the demo client's
+ALT-Identity logs handled requests, returned responses, and the bundled demo client's
 outbound HTTP calls by default. This is controlled by the Django setting
 `ALT_IDENTITY_VERBOSE_HTTP_LOGGING`, which defaults to `True`.
 
@@ -177,7 +182,6 @@ From the landing page:
 ### Authorization endpoint
 
 - URL: `GET /auth/authorize`
-- Query parameters:
 - Query parameters:
   - `client_id`
   - `redirect_uri`
@@ -230,7 +234,8 @@ Success response:
 
 ## Browser Automation Notes
 
-The login page exposes stable ids for Selenium and similar tools:
+The bundled demo client exposes stable ids for browser automation tools such as
+Selenium:
 
 - `#username-field`
 - `#password-field`

@@ -21,7 +21,8 @@ The identity-provider app. It is responsible for:
 
 ### `aot`
 
-The demo relying-party client. It is responsible for:
+The bundled demo client, acting as a small relying-party application. It is
+responsible for:
 
 - starting the authorization flow
 - handling the callback
@@ -95,7 +96,7 @@ Two different storage mechanisms are used:
 
 - Django browser session:
   - login state for the human user
-  - demo client's `access_token` and `refresh_token`
+  - bundled demo client's `access_token` and `refresh_token`
 - Database models:
   - issued authorization codes
   - issued tokens

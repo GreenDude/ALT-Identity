@@ -144,9 +144,10 @@ curl http://localhost:8000/auth/profile \
   -H "Authorization: Bearer ACCESS_TOKEN_HERE"
 ```
 
-## Selenium And Browser Testing
+## Browser Automation Testing
 
-The login page is instrumented for automation with stable ids:
+The bundled demo client login page is instrumented for browser automation,
+including Selenium, with stable ids:
 
 - `username-field`
 - `password-field`
