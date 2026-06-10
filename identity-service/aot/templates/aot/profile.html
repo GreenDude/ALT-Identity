@@ -1,0 +1,26 @@
+{% extends 'auth_server/base.html' %}
+
+{% block tittle %}Profile{% endblock %}
+
+{% block content %}
+<h1>Profile Response</h1>
+
+{% if profile_data %}
+    <dl>
+        {% for key, value in profile_data.items %}
+            <dt><strong>{{ key }}</strong></dt>
+            <dd>{{ value }}</dd>
+        {% endfor %}
+    </dl>
+{% else %}
+    <p>No profile data returned.</p>
+{% endif %}
+
+<h2>Raw JSON</h2>
+<pre id="profile-json">{{ formatted_json }}</pre>
+
+<form method="post" action="{% url 'logout' %}">
+    {% csrf_token %}
+    <button type="submit" id="logout-button">Logout</button>
+</form>
+{% endblock %}

@@ -6,8 +6,12 @@
 <h1>Login</h1>
 <form method="post">
     {% csrf_token %}
-    {{ form.as_p }}
-    <button type="submit">Login</button>
+    <p>{{ form.username.label_tag }} {{ form.username }}</p>
+    <p>{{ form.password.label_tag }} {{ form.password }}</p>
+    {% if form.non_field_errors %}
+        {{ form.non_field_errors }}
+    {% endif %}
+    <button type="submit" id="login-button">Login</button>
 </form>
 
 {% endblock %}

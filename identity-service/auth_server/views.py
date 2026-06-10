@@ -12,14 +12,21 @@ from django.views.decorators.csrf import csrf_exempt
 
 from .models import AuthCode, Token, UserProfile
 
+
+def _apply_login_field_ids(form: AuthenticationForm) -> AuthenticationForm:
+    form.fields["username"].widget.attrs["id"] = "username-field"
+    form.fields["password"].widget.attrs["id"] = "password-field"
+    return form
+
+
 def login_view(request: HttpRequest) -> HttpResponse:
     if request.method == "GET":
-        form = AuthenticationForm()
+        form = _apply_login_field_ids(AuthenticationForm())
         return render(request, "auth_server/login.html", {"form": form})
 
     if request.method == "POST":
         # process the request form
-        form = AuthenticationForm(request, data=request.POST)
+        form = _apply_login_field_ids(AuthenticationForm(request, data=request.POST))
 
         if form.is_valid():
             user = form.get_user()
