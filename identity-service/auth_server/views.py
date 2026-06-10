@@ -1,15 +1,16 @@
 import datetime
 import uuid
 
-from django.contrib.auth import login
+from django.contrib.auth import login, logout
 from django.contrib.auth.forms import AuthenticationForm
+from django.contrib.auth.models import User
 from django.http import HttpRequest, HttpResponse, HttpResponseNotAllowed, HttpResponseRedirect, JsonResponse
 from django.shortcuts import render, redirect
 from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
-from .models import AuthCode, Token
+from .models import AuthCode, Token, UserProfile
 
 def login_view(request: HttpRequest) -> HttpResponse:
     if request.method == "GET":
@@ -122,3 +123,41 @@ def token(request: HttpRequest) -> HttpResponse:
             return JsonResponse({"error": "invalid_grant"}, status=400)
 
     return HttpResponseNotAllowed(["POST"])
+
+
+def request_profile_details(request: HttpRequest) -> HttpResponse:
+    authorization = request.headers.get("Authorization")
+
+    if not authorization:
+        return JsonResponse({"error": "missing_authorization_header"}, status=401)
+
+    if not authorization.startswith("Bearer "):
+        return JsonResponse({"error": "invalid_authorization_header"}, status=401)
+
+    requested_token = authorization.removeprefix("Bearer ").strip()
+
+    auth_token = Token.objects.filter(access_token=requested_token).first()
+
+    if not auth_token:
+        return JsonResponse({"error": "invalid_token"}, status=401)
+
+    user = User.objects.filter(username=auth_token.user_name).first()
+
+    if not user:
+        return JsonResponse({"error": "user_not_found"}, status=404)
+
+    profile = UserProfile.objects.filter(user=user).first()
+
+    if not profile:
+        return JsonResponse({"error": "profile_not_found"}, status=404)
+
+    return JsonResponse({
+        "user_name": profile.user.username,
+        "learning_goal": profile.learning_goal,
+    })
+
+
+def logout_view(request: HttpRequest) -> HttpResponse:
+
+    logout(request)
+    return redirect("/")
