@@ -1,3 +1,5 @@
+"""URL routes for the local identity provider endpoints."""
+
 from django.urls import path
 from . import views
 

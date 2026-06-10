@@ -1,4 +1,13 @@
+"""Views for the local identity provider.
+
+This app intentionally implements a compact subset of an OIDC/OAuth-style
+identity server so early-stage projects can exercise login, authorization-code,
+token, and profile retrieval flows during development and automated testing.
+"""
+
+import base64
 import datetime
+import hashlib
 import uuid
 
 from django.contrib.auth import login, logout
@@ -14,12 +23,26 @@ from .models import AuthCode, Token, UserProfile
 
 
 def _apply_login_field_ids(form: AuthenticationForm) -> AuthenticationForm:
+    """Attach stable DOM ids to login form fields for Selenium-style tests."""
     form.fields["username"].widget.attrs["id"] = "username-field"
     form.fields["password"].widget.attrs["id"] = "password-field"
     return form
 
 
+def _create_pkce_challenge(verifier: str, method: str) -> str | None:
+    """Derive a code challenge from a PKCE verifier for a supported method."""
+    if method == "plain":
+        return verifier
+
+    if method == "S256":
+        digest = hashlib.sha256(verifier.encode("ascii")).digest()
+        return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+
+    return None
+
+
 def login_view(request: HttpRequest) -> HttpResponse:
+    """Render and process the username/password login form."""
     if request.method == "GET":
         form = _apply_login_field_ids(AuthenticationForm())
         return render(request, "auth_server/login.html", {"form": form})
@@ -45,10 +68,18 @@ def login_view(request: HttpRequest) -> HttpResponse:
 
 
 def authorize(request: HttpRequest) -> HttpResponse | None | HttpResponseRedirect | HttpResponseNotAllowed:
+    """Issue a single-use authorization code for an authenticated user.
+
+    The request is deliberately small in scope and expects the standard query
+    parameters used by the demo client: ``client_id``, ``redirect_uri``,
+    ``response_type=code``, and an optional ``scope`` string.
+    """
     client_id = request.GET.get("client_id")
     redirect_uri = request.GET.get("redirect_uri")
     response_type = request.GET.get("response_type")
     scope = request.GET.get("scope")
+    code_challenge = request.GET.get("code_challenge")
+    code_challenge_method = request.GET.get("code_challenge_method")
 
     if request.method == "GET":
         if request.user.is_authenticated:
@@ -58,6 +89,12 @@ def authorize(request: HttpRequest) -> HttpResponse | None | HttpResponseRedirec
                 return HttpResponse("Incorrect response type", status=400)
             if not redirect_uri:
                 return HttpResponse("Redirect URL not provided", status=400)
+            if code_challenge and not code_challenge_method:
+                return HttpResponse("Code challenge method not provided", status=400)
+            if code_challenge_method and code_challenge_method not in {"plain", "S256"}:
+                return HttpResponse("Unsupported code challenge method", status=400)
+            if code_challenge_method and not code_challenge:
+                return HttpResponse("Code challenge not provided", status=400)
 
             auth_code = uuid.uuid4().hex
 
@@ -68,6 +105,8 @@ def authorize(request: HttpRequest) -> HttpResponse | None | HttpResponseRedirec
                 expiry = timezone.now() + datetime.timedelta(minutes=5),
                 auth_code = auth_code,
                 redirect_uri = redirect_uri,
+                code_challenge=code_challenge,
+                code_challenge_method=code_challenge_method,
             ).save()
 
             return redirect(f"{redirect_uri}?code={auth_code}")
@@ -83,11 +122,13 @@ def authorize(request: HttpRequest) -> HttpResponse | None | HttpResponseRedirec
 
 @csrf_exempt
 def token(request: HttpRequest) -> HttpResponse:
+    """Exchange a valid authorization code for bearer-style token data."""
     if request.method == "POST":
         grant_type = request.POST.get("grant_type")
         code = request.POST.get("code")
         redirect_uri = request.POST.get("redirect_uri")
         client_id = request.POST.get("client_id")
+        code_verifier = request.POST.get("code_verifier")
 
         now = timezone.now()
 
@@ -103,6 +144,17 @@ def token(request: HttpRequest) -> HttpResponse:
         ).first()
 
         if authentication:
+            if authentication.code_challenge:
+                if not code_verifier:
+                    return JsonResponse({"error": "invalid_request"}, status=400)
+
+                expected_challenge = _create_pkce_challenge(
+                    code_verifier,
+                    authentication.code_challenge_method or "plain",
+                )
+                if expected_challenge is None or expected_challenge != authentication.code_challenge:
+                    return JsonResponse({"error": "invalid_grant"}, status=400)
+
             authentication.used = True
             authentication.save()
 
@@ -133,6 +185,11 @@ def token(request: HttpRequest) -> HttpResponse:
 
 
 def request_profile_details(request: HttpRequest) -> HttpResponse:
+    """Return the authenticated user's simple profile as JSON.
+
+    This endpoint expects a bearer token in the ``Authorization`` header and
+    currently exposes only the username and ``learning_goal`` fields.
+    """
     authorization = request.headers.get("Authorization")
 
     if not authorization:
@@ -165,6 +222,6 @@ def request_profile_details(request: HttpRequest) -> HttpResponse:
 
 
 def logout_view(request: HttpRequest) -> HttpResponse:
-
+    """Log the current browser session out and return to the landing page."""
     logout(request)
     return redirect("/")
