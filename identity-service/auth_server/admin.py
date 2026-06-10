@@ -1,5 +1,4 @@
 from django.contrib import admin
-from .models import AuthCodes
+from .models import AuthCode
 
-admin.site.register(AuthCodes)
-# Register your models here.
+admin.site.register(AuthCode)
