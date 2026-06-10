@@ -1,3 +1,5 @@
+"""URL routes for the demo relying-party application."""
+
 from django.urls import path
 
 from . import views
