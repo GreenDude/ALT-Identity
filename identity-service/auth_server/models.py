@@ -1,3 +1,4 @@
+from django.contrib.auth.models import User
 from django.db import models
 
 class AuthCode(models.Model):
@@ -21,3 +22,8 @@ class Token(models.Model):
     expires_in = models.IntegerField()
     scope = models.TextField(blank=True, null=True)
     created = models.DateTimeField(auto_now_add=True)
+
+
+class UserProfile(models.Model):
+    user = models.OneToOneField(User, on_delete=models.CASCADE)
+    learning_goal = models.TextField(null=True)

@@ -4,5 +4,6 @@ from . import views
 
 urlpatterns = [
     path('', views.index, name='index'),
-    path('callback', views.aot_callback, name='callback'),
+    path('callback', views.aot_callback, name='aot_callback'),
+    path('profile', views.aot_request_profile, name='aot_request_profile'),
 ]
