@@ -24,10 +24,7 @@ def aot_service(request: HttpRequest) -> HttpResponse:
 
 def aot_callback(request: HttpRequest) -> HttpResponse:
     auth_code = request.GET.get('code')
+    return HttpResponse(f"Auth Code: {auth_code}")
     # create new session
     # exchange auth_code for tokens
     # store tokens in db
-
-    return HttpResponse("Not implemented", status=501)
-
-
