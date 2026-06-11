@@ -3,15 +3,35 @@
 {% block tittle %}Login page{% endblock %}
 
 {% block content %}
-<h1>Login</h1>
-<form method="post">
-    {% csrf_token %}
-    <p>{{ form.username.label_tag }} {{ form.username }}</p>
-    <p>{{ form.password.label_tag }} {{ form.password }}</p>
-    {% if form.non_field_errors %}
-        {{ form.non_field_errors }}
-    {% endif %}
-    <button type="submit" id="login-button">Login</button>
-</form>
+<p class="eyebrow">Identity Provider</p>
+<h1>Local Login</h1>
+<p class="lede">Use a Django user account to continue the demo authorization flow. This screen keeps stable field ids so browser automation can drive it reliably.</p>
 
+<div class="grid two">
+    <section class="panel">
+        <h2>Sign in</h2>
+        <form method="post">
+            {% csrf_token %}
+            <p>{{ form.username.label_tag }} {{ form.username }}</p>
+            <p>{{ form.password.label_tag }} {{ form.password }}</p>
+            {% if form.non_field_errors %}
+                <div class="panel" style="padding: 14px; margin-bottom: 16px;">
+                    {{ form.non_field_errors }}
+                </div>
+            {% endif %}
+            <button type="submit" id="login-button">Login</button>
+        </form>
+    </section>
+    <section class="panel">
+        <h2>What happens next</h2>
+        {% if pending_authorization %}
+            <p><span class="pill success">Pending authorization detected</span></p>
+            <p>After a successful login, the browser will resume this request:</p>
+            <pre>{{ pending_authorization }}</pre>
+        {% else %}
+            <p><span class="pill warning">Standalone login</span></p>
+            <p>No pending authorization request is stored in session, so a successful login will return to the home page.</p>
+        {% endif %}
+    </section>
+</div>
 {% endblock %}

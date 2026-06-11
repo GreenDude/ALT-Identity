@@ -58,10 +58,52 @@ def _build_authorize_redirect_url(request: HttpRequest, code_challenge: str) -> 
     return f"{_build_absolute_url(request, 'authorize')}?{query}"
 
 
+def _build_demo_flow_steps(request: HttpRequest) -> list[dict[str, str | bool]]:
+    """Describe the demo flow with links and simple completion state."""
+    return [
+        {
+            "title": "1. Start at the client",
+            "description": "The relying-party app sends the browser into the authorization-code flow.",
+            "href": reverse("index"),
+            "status": True,
+        },
+        {
+            "title": "2. Authenticate",
+            "description": "The identity server presents the local username and password form.",
+            "href": reverse("login"),
+            "status": request.user.is_authenticated,
+        },
+        {
+            "title": "3. Exchange code for tokens",
+            "description": "The callback swaps the single-use auth code for bearer-style tokens.",
+            "href": reverse("aot_callback"),
+            "status": bool(request.session.get("access_token")),
+        },
+        {
+            "title": "4. Read the protected profile",
+            "description": "The demo client calls the protected profile endpoint and renders the response.",
+            "href": reverse("aot_request_profile"),
+            "status": bool(request.session.get("access_token")),
+        },
+    ]
+
+
 def index(request: HttpRequest) -> HttpResponse:
     """Render the landing page for the demo relying-party application."""
     log_inbound_request(request)
-    return log_response(render(request, 'aot/index.html'), source="aot.index")
+    return log_response(
+        render(
+            request,
+            "aot/index.html",
+            {
+                "demo_flow_steps": _build_demo_flow_steps(request),
+                "access_token_present": bool(request.session.get("access_token")),
+                "refresh_token_present": bool(request.session.get("refresh_token")),
+                "pkce_verifier_present": bool(request.session.get("pkce_code_verifier")),
+            },
+        ),
+        source="aot.index",
+    )
 
 
 def aot_service(request: HttpRequest) -> HttpResponse:
@@ -89,10 +131,31 @@ def aot_callback(request: HttpRequest) -> HttpResponse:
     auth_code = request.GET.get("code")
     code_verifier = request.session.get("pkce_code_verifier")
     if not auth_code:
-        return log_response(HttpResponse("Missing authorization code", status=400), source="aot.aot_callback")
+        return log_response(
+            render(
+                request,
+                "aot/callback.html",
+                {
+                    "callback_status": "Waiting for authorization response",
+                    "callback_message": "Open this route through the authorize flow so it receives a `code` query parameter.",
+                    "query_params": request.GET.urlencode(),
+                },
+                status=400,
+            ),
+            source="aot.aot_callback",
+        )
     if not code_verifier:
         return log_response(
-            HttpResponse("Missing PKCE code verifier in session", status=400),
+            render(
+                request,
+                "aot/callback.html",
+                {
+                    "callback_status": "Missing PKCE verifier",
+                    "callback_message": "The browser session does not contain the PKCE verifier needed for the token exchange.",
+                    "query_params": request.GET.urlencode(),
+                },
+                status=400,
+            ),
             source="aot.aot_callback",
         )
 
@@ -126,7 +189,16 @@ def aot_callback(request: HttpRequest) -> HttpResponse:
         token_body = exc.read().decode("utf-8")
     except URLError as exc:
         return log_response(
-            HttpResponse(f"Unable to reach token endpoint: {exc.reason}", status=502),
+            render(
+                request,
+                "aot/callback.html",
+                {
+                    "callback_status": "Token endpoint unavailable",
+                    "callback_message": f"Unable to reach token endpoint: {exc.reason}",
+                    "query_params": request.GET.urlencode(),
+                },
+                status=502,
+            ),
             source="aot.aot_callback",
         )
     log_outbound_response(
@@ -140,8 +212,15 @@ def aot_callback(request: HttpRequest) -> HttpResponse:
         token_data = json.loads(token_body)
     except ValueError:
         return log_response(
-            HttpResponse(
-                f"Token endpoint returned non-JSON response:\n\n{token_body}",
+            render(
+                request,
+                "aot/callback.html",
+                {
+                    "callback_status": "Unexpected token response",
+                    "callback_message": "The token endpoint returned a non-JSON response.",
+                    "raw_response": token_body,
+                    "query_params": request.GET.urlencode(),
+                },
                 status=token_status,
             ),
             source="aot.aot_callback",
@@ -240,6 +319,8 @@ def aot_request_profile(request: HttpRequest) -> HttpResponse:
                 "profile_data": profile_data,
                 "formatted_json": json.dumps(profile_data, indent=2, sort_keys=True),
                 "response_status": profile_status,
+                "access_token_present": bool(request.session.get("access_token")),
+                "refresh_token_present": bool(request.session.get("refresh_token")),
             },
             status=profile_status,
         ),

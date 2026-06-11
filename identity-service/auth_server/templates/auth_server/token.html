@@ -1,0 +1,37 @@
+{% extends 'auth_server/base.html' %}
+
+{% block tittle %}Token Endpoint{% endblock %}
+
+{% block content %}
+<p class="eyebrow">Identity Provider</p>
+<h1>Token Endpoint</h1>
+<p class="lede">This route accepts a <code>POST</code> and exchanges a valid authorization code for an access token and refresh token. The demo client calls it automatically from the callback step.</p>
+
+<div class="grid two">
+    <section class="panel">
+        <h2>POST fields</h2>
+        <ul class="clean">
+            <li><code>grant_type=authorization_code</code></li>
+            <li><code>code</code> from the authorize redirect</li>
+            <li><code>client_id</code> matching the original request</li>
+            <li><code>redirect_uri</code> matching the original request</li>
+            <li><code>code_verifier</code> when PKCE is used</li>
+        </ul>
+    </section>
+    <section class="panel">
+        <h2>Endpoint URL</h2>
+        <pre>{{ endpoint_examples.token_url }}</pre>
+    </section>
+</div>
+
+<section class="panel" style="margin-top: 18px;">
+    <h2>Success response</h2>
+<pre>{
+  "access_token": "string",
+  "refresh_token": "string",
+  "token_type": "Bearer",
+  "expires_in": 3600,
+  "scope": "profile.read"
+}</pre>
+</section>
+{% endblock %}

@@ -43,13 +43,41 @@ def _create_pkce_challenge(verifier: str, method: str) -> str | None:
     return None
 
 
+def _wants_html(request: HttpRequest) -> bool:
+    """Best-effort check for direct browser visits."""
+    accept = request.headers.get("Accept", "")
+    return "text/html" in accept
+
+
+def _endpoint_examples(request: HttpRequest) -> dict[str, str]:
+    """Build stable endpoint examples for the demo templates."""
+    authorize_url = request.build_absolute_uri(reverse("authorize"))
+    callback_url = request.build_absolute_uri(reverse("aot_callback"))
+    return {
+        "authorize_example": (
+            f"{authorize_url}?client_id=awesome-service&redirect_uri={callback_url}"
+            "&response_type=code&scope=profile.read&code_challenge=demo-challenge"
+            "&code_challenge_method=S256"
+        ),
+        "token_url": request.build_absolute_uri(reverse("token")),
+        "profile_url": request.build_absolute_uri(reverse("profile")),
+    }
+
+
 def login_view(request: HttpRequest) -> HttpResponse:
     """Render and process the username/password login form."""
     log_inbound_request(request)
     if request.method == "GET":
         form = _apply_login_field_ids(AuthenticationForm())
         return log_response(
-            render(request, "auth_server/login.html", {"form": form}),
+            render(
+                request,
+                "auth_server/login.html",
+                {
+                    "form": form,
+                    "pending_authorization": request.session.get("pending_authorization"),
+                },
+            ),
             source="auth_server.login_view",
         )
 
@@ -71,7 +99,14 @@ def login_view(request: HttpRequest) -> HttpResponse:
             return log_response(redirect("/"), source="auth_server.login_view")
         else:
             return log_response(
-                render(request, "auth_server/login.html", {"form": form}),
+                render(
+                    request,
+                    "auth_server/login.html",
+                    {
+                        "form": form,
+                        "pending_authorization": request.session.get("pending_authorization"),
+                    },
+                ),
                 source="auth_server.login_view",
             )
 
@@ -98,6 +133,19 @@ def authorize(request: HttpRequest) -> HttpResponse | None | HttpResponseRedirec
     code_challenge_method = request.GET.get("code_challenge_method")
 
     if request.method == "GET":
+        if not any([client_id, redirect_uri, response_type, scope, code_challenge, code_challenge_method]):
+            return log_response(
+                render(
+                    request,
+                    "auth_server/authorize.html",
+                    {
+                        "endpoint_examples": _endpoint_examples(request),
+                        "request_params": [],
+                    },
+                ),
+                source="auth_server.authorize",
+            )
+
         if request.user.is_authenticated:
             if not client_id:
                 return log_response(HttpResponse("Client ID not provided", status=400), source="auth_server.authorize")
@@ -149,6 +197,18 @@ def authorize(request: HttpRequest) -> HttpResponse | None | HttpResponseRedirec
 def token(request: HttpRequest) -> HttpResponse:
     """Exchange a valid authorization code for bearer-style token data."""
     log_inbound_request(request)
+    if request.method == "GET":
+        return log_response(
+            render(
+                request,
+                "auth_server/token.html",
+                {
+                    "endpoint_examples": _endpoint_examples(request),
+                },
+            ),
+            source="auth_server.token",
+        )
+
     if request.method == "POST":
         grant_type = request.POST.get("grant_type")
         code = request.POST.get("code")
@@ -237,6 +297,18 @@ def request_profile_details(request: HttpRequest) -> HttpResponse:
     log_inbound_request(request)
     authorization = request.headers.get("Authorization")
 
+    if request.method == "GET" and not authorization and _wants_html(request):
+        return log_response(
+            render(
+                request,
+                "auth_server/profile_endpoint.html",
+                {
+                    "endpoint_examples": _endpoint_examples(request),
+                },
+            ),
+            source="auth_server.request_profile_details",
+        )
+
     if not authorization:
         return log_response(
             JsonResponse({"error": "missing_authorization_header"}, status=401),
@@ -287,5 +359,15 @@ def request_profile_details(request: HttpRequest) -> HttpResponse:
 def logout_view(request: HttpRequest) -> HttpResponse:
     """Log the current browser session out and return to the landing page."""
     log_inbound_request(request)
+    if request.method == "GET":
+        return log_response(
+            render(
+                request,
+                "auth_server/logout.html",
+                {"is_authenticated": request.user.is_authenticated},
+            ),
+            source="auth_server.logout_view",
+        )
+
     logout(request)
     return log_response(redirect("/"), source="auth_server.logout_view")

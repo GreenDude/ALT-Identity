@@ -3,24 +3,42 @@
 {% block tittle %}Profile{% endblock %}
 
 {% block content %}
+<p class="eyebrow">Demo Client</p>
 <h1>Profile Response</h1>
+<p class="lede">The relying-party has completed the authorization-code flow and used the bearer token to call the protected profile endpoint. This page renders both a readable field view and the raw JSON payload for quick inspection during demos and tests.</p>
 
-{% if profile_data %}
-    <dl>
-        {% for key, value in profile_data.items %}
-            <dt><strong>{{ key }}</strong></dt>
-            <dd>{{ value }}</dd>
-        {% endfor %}
-    </dl>
-{% else %}
-    <p>No profile data returned.</p>
-{% endif %}
+<div class="grid two">
+    <section class="panel">
+        <h2>Response summary</h2>
+        <p><span class="pill {% if response_status == 200 %}success{% else %}warning{% endif %}">HTTP {{ response_status }}</span></p>
+        <p>Access token in session: {% if access_token_present %}yes{% else %}no{% endif %}</p>
+        <p>Refresh token in session: {% if refresh_token_present %}yes{% else %}no{% endif %}</p>
+    </section>
+    <section class="panel">
+        <h2>Rendered fields</h2>
+        {% if profile_data %}
+            <dl>
+                {% for key, value in profile_data.items %}
+                    <dt>{{ key }}</dt>
+                    <dd>{{ value }}</dd>
+                {% endfor %}
+            </dl>
+        {% else %}
+            <p>No profile data returned.</p>
+        {% endif %}
+    </section>
+</div>
 
-<h2>Raw JSON</h2>
-<pre id="profile-json">{{ formatted_json }}</pre>
+<section class="panel" style="margin-top: 18px;">
+    <h2>Raw JSON</h2>
+    <pre id="profile-json">{{ formatted_json }}</pre>
+</section>
 
-<form method="post" action="{% url 'logout' %}">
-    {% csrf_token %}
-    <button type="submit" id="logout-button">Logout</button>
-</form>
+<div style="margin-top: 18px; display: flex; gap: 12px; flex-wrap: wrap;">
+    <a href="{% url 'aot_request_profile' %}" class="button secondary">Refresh Profile</a>
+    <form method="post" action="{% url 'logout' %}">
+        {% csrf_token %}
+        <button type="submit" id="logout-button">Logout</button>
+    </form>
+</div>
 {% endblock %}

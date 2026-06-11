@@ -1,0 +1,32 @@
+{% extends 'auth_server/base.html' %}
+
+{% block tittle %}Callback{% endblock %}
+
+{% block content %}
+<p class="eyebrow">Demo Client</p>
+<h1>Authorization Callback</h1>
+<p class="lede">{{ callback_message }}</p>
+
+<div class="grid two">
+    <section class="panel">
+        <h2>Status</h2>
+        <p><span class="pill warning">{{ callback_status }}</span></p>
+        <p>This route is normally reached automatically after the identity server redirects back with a one-time authorization code.</p>
+    </section>
+    <section class="panel">
+        <h2>Current Query String</h2>
+        {% if query_params %}
+            <pre>{{ query_params }}</pre>
+        {% else %}
+            <p>No query parameters were received.</p>
+        {% endif %}
+    </section>
+</div>
+
+{% if raw_response %}
+<section class="panel" style="margin-top: 18px;">
+    <h2>Raw Upstream Response</h2>
+    <pre>{{ raw_response }}</pre>
+</section>
+{% endif %}
+{% endblock %}

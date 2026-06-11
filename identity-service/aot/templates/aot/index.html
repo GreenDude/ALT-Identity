@@ -1,11 +1,42 @@
-<h1>Welcome to ALT-Identity</h1>
-<h3>Your light-weight solution to your authentication needs</h3>
+{% extends 'auth_server/base.html' %}
 
-<p>
-    ALT-Identity is a simple OIDC-like identity service intended for early development
-    and testing. It provides a lightweight way to exercise login, authorization, token,
-    and profile flows without needing a full production identity platform.
-</p>
+{% block tittle %}Demo Home{% endblock %}
 
-<p>Links:</p>
-<p><a href="{% url 'aot_request_profile' %}">Profile demo</a></p>
+{% block content %}
+<p class="eyebrow">Demo Client</p>
+<h1>Walk the full ALT-Identity flow in the browser</h1>
+<p class="lede">This bundled relying-party app exists to demonstrate the local authorization-code flow end to end. It drives the redirect to the identity server, completes the PKCE token exchange, and renders the protected profile response as readable HTML.</p>
+
+<div class="grid two" style="margin-bottom: 18px;">
+    <section class="panel">
+        <h2>Current browser session</h2>
+        <dl>
+            <dt>Access token</dt>
+            <dd>{% if access_token_present %}<span class="pill success">Stored in session</span>{% else %}<span class="pill warning">Not present</span>{% endif %}</dd>
+            <dt>Refresh token</dt>
+            <dd>{% if refresh_token_present %}<span class="pill success">Stored in session</span>{% else %}<span class="pill warning">Not present</span>{% endif %}</dd>
+            <dt>PKCE verifier</dt>
+            <dd>{% if pkce_verifier_present %}<span class="pill">Prepared for callback exchange</span>{% else %}<span class="pill warning">Not staged</span>{% endif %}</dd>
+        </dl>
+    </section>
+    <section class="panel">
+        <h2>Try the demo</h2>
+        <p>The fastest path is to launch the profile demo and let the redirects guide you through login, token issuance, and profile retrieval.</p>
+        <a href="{% url 'aot_request_profile' %}" class="button">Start Profile Demo</a>
+    </section>
+</div>
+
+<section class="panel">
+    <h2>Flow overview</h2>
+    <div class="grid">
+        {% for step in demo_flow_steps %}
+            <div class="panel">
+                <p><span class="pill {% if step.status %}success{% endif %}">{% if step.status %}Ready{% else %}Pending{% endif %}</span></p>
+                <h3>{{ step.title }}</h3>
+                <p>{{ step.description }}</p>
+                <a href="{{ step.href }}">Open step</a>
+            </div>
+        {% endfor %}
+    </div>
+</section>
+{% endblock %}

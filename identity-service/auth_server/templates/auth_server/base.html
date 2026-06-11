@@ -1,21 +1,290 @@
 <!DOCTYPE html>
-<html lang = "en">
-    <head>
-        <meta charset="UTF-8">
-        <meta name = "viewport" content="width=device-width, initial-scale=1.0">
-        <title>ALT-Identity - {% block tittle %} {% endblock %}</title>
-<!--        {% load static %}-->
-<!--        <link rel="stylesheet" href="{% static 'css/styles.css' %}">-->
-    </head>
-    <body>
-        <header>
-            "ALT IDENTITY"
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ALT-Identity - {% block tittle %}{% endblock %}</title>
+    <style>
+        :root {
+            --ink: #f3f4f6;
+            --muted: #d1d5db;
+            --paper: #0b1020;
+            --card: rgba(17, 24, 39, 0.92);
+            --edge: rgba(125, 249, 255, 0.18);
+            --accent: #7df9ff;
+            --accent-dark: #ff4fd8;
+            --accent-soft: rgba(125, 249, 255, 0.14);
+            --success: #7df9ff;
+            --warning: #ff4fd8;
+            --shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+            --radius-lg: 28px;
+            --radius-md: 18px;
+            --radius-sm: 12px;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", serif;
+            color: var(--ink);
+            background:
+                radial-gradient(circle at top left, rgba(125, 249, 255, 0.16), transparent 28%),
+                radial-gradient(circle at right, rgba(255, 79, 216, 0.16), transparent 26%),
+                linear-gradient(180deg, #0b1020 0%, #0f172a 100%);
+        }
+
+        a {
+            color: var(--accent);
+        }
+
+        .shell {
+            width: min(1120px, calc(100% - 32px));
+            margin: 0 auto;
+            padding: 28px 0 40px;
+        }
+
+        .site-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 16px;
+            margin-bottom: 24px;
+            padding: 18px 22px;
+            border: 1px solid var(--edge);
+            border-radius: var(--radius-md);
+            background: rgba(17, 24, 39, 0.82);
+            backdrop-filter: blur(12px);
+            box-shadow: var(--shadow);
+        }
+
+        .brand {
+            margin: 0;
+            font-size: 0.95rem;
+            font-weight: 700;
+            letter-spacing: 0.16em;
+            text-transform: uppercase;
+        }
+
+        .brand-subtitle {
+            margin: 6px 0 0;
+            color: var(--muted);
+            font-size: 0.95rem;
+        }
+
+        .nav {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+
+        .nav a,
+        .button,
+        button {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 11px 16px;
+            border: 1px solid transparent;
+            border-radius: 999px;
+            background: var(--accent);
+            color: #0b1020;
+            text-decoration: none;
+            font-size: 0.96rem;
+            font-weight: 700;
+            font-family: inherit;
+            cursor: pointer;
+            transition: transform 0.16s ease, background 0.16s ease;
+        }
+
+        .nav a.secondary,
+        .button.secondary {
+            border-color: var(--edge);
+            background: rgba(17, 24, 39, 0.82);
+            color: var(--muted);
+        }
+
+        .nav a:hover,
+        .button:hover,
+        button:hover {
+            transform: translateY(-1px);
+            background: var(--accent-dark);
+            color: #ffffff;
+        }
+
+        .nav a.secondary:hover,
+        .button.secondary:hover {
+            background: rgba(255, 79, 216, 0.14);
+            border-color: rgba(255, 79, 216, 0.45);
+        }
+
+        .page-card {
+            padding: 30px;
+            border: 1px solid var(--edge);
+            border-radius: var(--radius-lg);
+            background: var(--card);
+            box-shadow: var(--shadow);
+        }
+
+        .eyebrow {
+            margin: 0 0 10px;
+            color: var(--accent-dark);
+            font-size: 0.86rem;
+            font-weight: 700;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+        }
+
+        h1, h2, h3 {
+            margin-top: 0;
+        }
+
+        .lede {
+            max-width: 70ch;
+            color: var(--muted);
+            font-size: 1.05rem;
+            line-height: 1.6;
+        }
+
+        .grid {
+            display: grid;
+            gap: 18px;
+        }
+
+        .grid.two {
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        }
+
+        .panel {
+            padding: 20px;
+            border: 1px solid var(--edge);
+            border-radius: var(--radius-md);
+            background: rgba(17, 24, 39, 0.88);
+        }
+
+        .pill {
+            display: inline-block;
+            padding: 6px 10px;
+            border-radius: 999px;
+            background: var(--accent-soft);
+            color: var(--accent);
+            font-size: 0.86rem;
+            font-weight: 700;
+        }
+
+        .pill.success {
+            background: rgba(125, 249, 255, 0.14);
+            color: var(--success);
+        }
+
+        .pill.warning {
+            background: rgba(255, 79, 216, 0.14);
+            color: var(--warning);
+        }
+
+        dl {
+            margin: 0;
+        }
+
+        dt {
+            margin-top: 16px;
+            font-weight: 700;
+        }
+
+        dd {
+            margin: 6px 0 0;
+            color: var(--muted);
+        }
+
+        pre, code {
+            font-family: "SFMono-Regular", "Menlo", "Consolas", monospace;
+        }
+
+        pre {
+            overflow-x: auto;
+            padding: 16px;
+            border-radius: var(--radius-sm);
+            background: #09111f;
+            color: #d1d5db;
+            border: 1px solid rgba(125, 249, 255, 0.14);
+        }
+
+        ul.clean,
+        ol.clean {
+            margin: 0;
+            padding-left: 18px;
+        }
+
+        form p {
+            margin: 0 0 16px;
+        }
+
+        input[type="text"],
+        input[type="password"] {
+            width: 100%;
+            margin-top: 8px;
+            padding: 12px 14px;
+            border: 1px solid rgba(125, 249, 255, 0.22);
+            border-radius: var(--radius-sm);
+            background: rgba(11, 16, 32, 0.92);
+            color: var(--ink);
+            font: inherit;
+        }
+
+        input[type="text"]:focus,
+        input[type="password"]:focus {
+            outline: 2px solid rgba(125, 249, 255, 0.26);
+            border-color: rgba(125, 249, 255, 0.5);
+        }
+
+        .footer {
+            margin-top: 18px;
+            color: var(--muted);
+            text-align: center;
+            font-size: 0.92rem;
+        }
+
+        @media (max-width: 720px) {
+            .shell {
+                width: min(100% - 20px, 1120px);
+                padding-top: 18px;
+            }
+
+            .site-header,
+            .page-card {
+                padding: 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="shell">
+        <header class="site-header">
+            <div>
+                <p class="brand">ALT Identity</p>
+                <p class="brand-subtitle">Local auth flows for demos, testing, and browser automation.</p>
+            </div>
+            <nav class="nav">
+                <a href="{% url 'index' %}" class="secondary">Home</a>
+                <a href="{% url 'aot_request_profile' %}">Run Demo</a>
+                {% if request.user.is_authenticated %}
+                    <a href="{% url 'logout' %}" class="secondary">Logout</a>
+                {% else %}
+                    <a href="{% url 'login' %}" class="secondary">Login</a>
+                {% endif %}
+                <a href="{% url 'token' %}" class="secondary">Token API</a>
+                <a href="{% url 'profile' %}" class="secondary">Profile API</a>
+            </nav>
         </header>
-        <main>
+        <main class="page-card">
             {% block content %}{% endblock %}
         </main>
-        <footer>
-            Copyright Cloud-Raccoon.com &copy 2026
+        <footer class="footer">
+            Copyright Cloud-Raccoon.com &copy; 2026
         </footer>
-    </body>
+    </div>
+</body>
 </html>
