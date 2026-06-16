@@ -46,6 +46,9 @@ class AotRequestProfileViewTests(TestCase):
         verifier = client.session["pkce_code_verifier"]
 
         self.assertEqual(parsed.path, "/auth/authorize")
+        self.assertEqual(query["scope"], ["openid profile"])
+        self.assertIn("state", query)
+        self.assertIn("nonce", query)
         self.assertEqual(query["code_challenge_method"], ["S256"])
         self.assertEqual(
             query["code_challenge"],
@@ -69,7 +72,7 @@ class AotRequestProfileViewTests(TestCase):
     @patch("aot.views.urlopen")
     def test_profile_forbidden_is_rendered_without_restart_flow(self, mock_urlopen: MagicMock) -> None:
         mock_urlopen.side_effect = HTTPError(
-            url="http://localhost:8000/auth/profile",
+            url="http://localhost:8000/auth/userinfo",
             code=403,
             msg="Forbidden",
             hdrs=None,
@@ -90,6 +93,7 @@ class AotCallbackTests(TestCase):
         self.client = Client()
         session = self.client.session
         session["pkce_code_verifier"] = "verifier-123"
+        session["oidc_state"] = "state-123"
         session.save()
 
     @patch("aot.views.urlopen")
@@ -102,7 +106,7 @@ class AotCallbackTests(TestCase):
             fp=MagicMock(read=MagicMock(return_value=b'{"error": "invalid_grant"}')),
         )
 
-        response = self.client.get(reverse("aot_callback"), {"code": "bad-code"})
+        response = self.client.get(reverse("aot_callback"), {"code": "bad-code", "state": "state-123"})
 
         self.assertEqual(response.status_code, 400)
         self.assertJSONEqual(response.content, {"error": "invalid_grant"})
@@ -113,13 +117,13 @@ class AotCallbackTests(TestCase):
         mock_response = MagicMock()
         mock_response.__enter__.return_value.status = 200
         mock_response.__enter__.return_value.read.return_value = (
-            b'{"access_token": "abc", "refresh_token": "def"}'
+            b'{"access_token": "abc", "refresh_token": "def", "id_token": "ghi"}'
         )
         mock_urlopen.return_value = mock_response
 
         response = self.client.get(
             reverse("aot_callback"),
-            {"code": "good-code"},
+            {"code": "good-code", "state": "state-123"},
             HTTP_HOST="127.0.0.1:8000",
         )
 
@@ -129,3 +133,4 @@ class AotCallbackTests(TestCase):
 
         self.assertEqual(request_object.full_url, "http://127.0.0.1:8000/auth/token")
         self.assertEqual(posted_data["redirect_uri"], ["http://127.0.0.1:8000/callback"])
+        self.assertEqual(self.client.session.get("id_token"), "ghi")

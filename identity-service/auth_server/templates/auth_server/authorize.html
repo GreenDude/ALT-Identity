@@ -5,7 +5,7 @@
 {% block content %}
 <p class="eyebrow">Identity Provider</p>
 <h1>Authorization Endpoint</h1>
-<p class="lede">This endpoint starts the demo authorization-code flow. In normal use the relying-party app sends the browser here with query parameters describing the client, redirect URI, requested scope, and PKCE challenge.</p>
+<p class="lede">This endpoint starts the OpenID Connect authorization-code flow. In normal use the relying-party app sends the browser here with query parameters describing the client, redirect URI, requested scope, state, nonce, and PKCE challenge.</p>
 
 <div class="grid two">
     <section class="panel">
@@ -14,7 +14,9 @@
             <li><code>client_id</code> to identify the demo client</li>
             <li><code>redirect_uri</code> for the callback route</li>
             <li><code>response_type=code</code> for auth-code flow</li>
-            <li><code>scope</code> such as <code>profile.read</code></li>
+            <li><code>scope</code> including <code>openid profile</code></li>
+            <li><code>state</code> for callback verification</li>
+            <li><code>nonce</code> for ID token binding</li>
             <li><code>code_challenge</code> and <code>code_challenge_method</code> for PKCE</li>
         </ul>
     </section>
@@ -26,7 +28,7 @@
 
 <section class="panel" style="margin-top: 18px;">
     <h2>How to try it</h2>
-    <p>Use the bundled client instead of hand-crafting the query string if you want the full round-trip demo.</p>
+    <p>Use the bundled client instead of hand-crafting the query string if you want the full OpenID Connect round-trip demo.</p>
     <a href="{% url 'aot_request_profile' %}" class="button">Launch Profile Demo</a>
 </section>
 {% endblock %}

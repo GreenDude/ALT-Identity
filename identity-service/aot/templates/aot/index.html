@@ -15,13 +15,19 @@
             <dd>{% if access_token_present %}<span class="pill success">Stored in session</span>{% else %}<span class="pill warning">Not present</span>{% endif %}</dd>
             <dt>Refresh token</dt>
             <dd>{% if refresh_token_present %}<span class="pill success">Stored in session</span>{% else %}<span class="pill warning">Not present</span>{% endif %}</dd>
+            <dt>ID token</dt>
+            <dd>{% if id_token_present %}<span class="pill success">Stored in session</span>{% else %}<span class="pill warning">Not present</span>{% endif %}</dd>
             <dt>PKCE verifier</dt>
             <dd>{% if pkce_verifier_present %}<span class="pill">Prepared for callback exchange</span>{% else %}<span class="pill warning">Not staged</span>{% endif %}</dd>
+            <dt>OIDC state</dt>
+            <dd>{% if state_present %}<span class="pill">Prepared for callback verification</span>{% else %}<span class="pill warning">Not staged</span>{% endif %}</dd>
+            <dt>OIDC nonce</dt>
+            <dd>{% if nonce_present %}<span class="pill">Prepared for ID token binding</span>{% else %}<span class="pill warning">Not staged</span>{% endif %}</dd>
         </dl>
     </section>
     <section class="panel">
         <h2>Try the demo</h2>
-        <p>The fastest path is to launch the profile demo and let the redirects guide you through login, token issuance, and profile retrieval.</p>
+        <p>The fastest path is to launch the userinfo demo and let the redirects guide you through login, token issuance, and standards-shaped profile retrieval.</p>
         <a href="{% url 'aot_request_profile' %}" class="button">Start Profile Demo</a>
     </section>
 </div>

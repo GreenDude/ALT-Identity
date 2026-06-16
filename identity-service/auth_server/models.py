@@ -1,7 +1,31 @@
 """Persistence models for authorization and profile data."""
 
+import datetime
+
 from django.contrib.auth.models import User
 from django.db import models
+from django.utils import timezone
+
+
+class Client(models.Model):
+    """Registered relying on party configuration for the local OIDC provider."""
+
+    client_id = models.CharField(max_length=255, unique=True)
+    name = models.CharField(max_length=255)
+    redirect_uris = models.TextField()
+    allowed_scopes = models.TextField(default="openid profile")
+    is_confidential = models.BooleanField(default=False)
+    created = models.DateTimeField(auto_now_add=True)
+
+    def registered_redirect_uris(self) -> list[str]:
+        return [uri.strip() for uri in self.redirect_uris.splitlines() if uri.strip()]
+
+    def allowed_scope_set(self) -> set[str]:
+        return {scope.strip() for scope in self.allowed_scopes.split() if scope.strip()}
+
+    def __str__(self) -> str:
+        return self.client_id
+
 
 class AuthCode(models.Model):
     """Stores a short-lived, single-use authorization code.
@@ -21,6 +45,8 @@ class AuthCode(models.Model):
     redirect_uri = models.URLField(blank=True, null=True)
     code_challenge = models.CharField(max_length=255, blank=True, null=True)
     code_challenge_method = models.CharField(max_length=16, blank=True, null=True)
+    state = models.CharField(max_length=255, blank=True, null=True)
+    nonce = models.CharField(max_length=255, blank=True, null=True)
 
 
 class Token(models.Model):
@@ -34,6 +60,12 @@ class Token(models.Model):
     expires_in = models.IntegerField()
     scope = models.TextField(blank=True, null=True)
     created = models.DateTimeField(auto_now_add=True)
+
+    def expires_at(self):
+        return self.created + datetime.timedelta(seconds=self.expires_in)
+
+    def is_expired(self) -> bool:
+        return timezone.now() >= self.expires_at()
 
 
 class UserProfile(models.Model):
