@@ -14,17 +14,22 @@ payload manually and automate the flow with browser-based tests.
 
 import base64
 import json
+import logging
 import secrets
 from hashlib import sha256
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+from django.conf import settings
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import render, redirect
 from django.urls import reverse
 
 from config.http_logging import log_inbound_request, log_outbound_request, log_outbound_response, log_response
+
+
+LOGGER = logging.getLogger("alt_identity.http")
 
 
 def _generate_pkce_verifier() -> str:
@@ -167,6 +172,24 @@ def aot_callback(request: HttpRequest) -> HttpResponse:
             source="aot.aot_callback",
         )
     if not returned_state or not expected_state or returned_state != expected_state:
+        LOGGER.warning(
+            "Invalid OIDC state on callback: %s",
+            json.dumps(
+                {
+                    "kind": "oidc_state_verification_failed",
+                    "path": request.path,
+                    "query_string": request.META.get("QUERY_STRING", ""),
+                    "returned_state": returned_state,
+                    "expected_state": expected_state,
+                    "auth_code_present": bool(auth_code),
+                    "session_key": request.session.session_key,
+                    "session_has_pkce_verifier": bool(code_verifier),
+                    "session_has_nonce": bool(request.session.get("oidc_nonce")),
+                    "session_cookie_present": request.COOKIES.get(settings.SESSION_COOKIE_NAME) is not None,
+                },
+                sort_keys=True,
+            ),
+        )
         return log_response(
             render(
                 request,

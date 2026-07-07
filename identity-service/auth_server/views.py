@@ -5,10 +5,13 @@ from __future__ import annotations
 import base64
 import datetime
 import hashlib
+import json
+import logging
 import uuid
 from typing import Any
 from urllib.parse import urlencode, urlsplit, urlunsplit, parse_qsl
 
+from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 from django.contrib.auth import login, logout
 from django.contrib.auth.forms import AuthenticationForm
@@ -23,6 +26,9 @@ from config.http_logging import log_inbound_request, log_response
 
 from .models import AuthCode, Client, Token, UserProfile
 from .oidc import build_jwks, get_issuer, sign_jwt
+
+
+LOGGER = logging.getLogger("alt_identity.http")
 
 
 def _apply_login_field_ids(form: AuthenticationForm) -> AuthenticationForm:
@@ -300,6 +306,23 @@ def authorize(request: HttpRequest) -> HttpResponse | HttpResponseRedirect | Htt
 
     if not request.user.is_authenticated:
         request.session["pending_authorization"] = request.get_full_path()
+        LOGGER.info(
+            "OIDC authorization pending login: %s",
+            json.dumps(
+                {
+                    "kind": "oidc_authorization_pending_login",
+                    "client_id": client.client_id,
+                    "redirect_uri": redirect_uri,
+                    "state": state,
+                    "nonce_present": bool(nonce),
+                    "code_challenge_method": code_challenge_method,
+                    "session_key": request.session.session_key,
+                    "session_cookie_present": bool(request.COOKIES.get(settings.SESSION_COOKIE_NAME)),
+                    "pending_authorization": request.session.get("pending_authorization"),
+                },
+                sort_keys=True,
+            ),
+        )
         return log_response(
             redirect(reverse("login")),
             source="auth_server.authorize",
@@ -318,9 +341,31 @@ def authorize(request: HttpRequest) -> HttpResponse | HttpResponseRedirect | Htt
         state=state,
         nonce=nonce,
     ).save()
+    callback_url = _append_query_params(redirect_uri, {"code": auth_code, "state": state})
+
+    LOGGER.info(
+        "OIDC authorization redirect issued: %s",
+        json.dumps(
+            {
+                "kind": "oidc_authorization_redirect_issued",
+                "client_id": client.client_id,
+                "redirect_uri": redirect_uri,
+                "callback_url": callback_url,
+                "state": state,
+                "nonce_present": bool(nonce),
+                "scope": " ".join(sorted(requested_scopes)),
+                "code_challenge_method": code_challenge_method,
+                "auth_code": auth_code,
+                "user": request.user.username,
+                "session_key": request.session.session_key,
+                "session_cookie_present": bool(request.COOKIES.get(settings.SESSION_COOKIE_NAME)),
+            },
+            sort_keys=True,
+        ),
+    )
 
     return log_response(
-        redirect(_append_query_params(redirect_uri, {"code": auth_code, "state": state})),
+        redirect(callback_url),
         source="auth_server.authorize",
     )
 

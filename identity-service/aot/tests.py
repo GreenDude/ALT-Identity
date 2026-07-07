@@ -1,3 +1,4 @@
+import json
 from urllib.parse import parse_qs, urlparse
 from urllib.error import HTTPError
 from unittest.mock import MagicMock, patch
@@ -134,3 +135,21 @@ class AotCallbackTests(TestCase):
         self.assertEqual(request_object.full_url, "http://127.0.0.1:8000/auth/token")
         self.assertEqual(posted_data["redirect_uri"], ["http://127.0.0.1:8000/callback"])
         self.assertEqual(self.client.session.get("id_token"), "ghi")
+
+    def test_invalid_state_logs_callback_debug_context(self) -> None:
+        with self.assertLogs("alt_identity.http", level="WARNING") as logs:
+            response = self.client.get(
+                reverse("aot_callback"),
+                {"code": "good-code", "state": "wrong-state"},
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Invalid OIDC state on callback", logs.output[0])
+
+        payload = json.loads(logs.output[0].split("Invalid OIDC state on callback: ", 1)[1])
+        self.assertEqual(payload["kind"], "oidc_state_verification_failed")
+        self.assertEqual(payload["returned_state"], "wrong-state")
+        self.assertEqual(payload["expected_state"], "state-123")
+        self.assertTrue(payload["auth_code_present"])
+        self.assertTrue(payload["session_has_pkce_verifier"])
+        self.assertTrue(payload["session_cookie_present"])
