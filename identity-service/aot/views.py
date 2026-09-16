@@ -26,10 +26,12 @@ from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import render, redirect
 from django.urls import reverse
 
+from auth_server.models import Client
 from config.http_logging import log_inbound_request, log_outbound_request, log_outbound_response, log_response
 
 
 LOGGER = logging.getLogger("alt_identity.http")
+DEMO_CLIENT_ID = "awesome-service"
 
 
 def _generate_pkce_verifier() -> str:
@@ -58,6 +60,26 @@ def _build_absolute_url(request: HttpRequest, route_name: str) -> str:
     return request.build_absolute_uri(reverse(route_name))
 
 
+def _ensure_demo_client_redirect_uri(redirect_uri: str) -> None:
+    """Keep the bundled demo client usable on the current development host."""
+    client, _ = Client.objects.get_or_create(
+        client_id=DEMO_CLIENT_ID,
+        defaults={
+            "name": "Bundled Demo Client",
+            "redirect_uris": redirect_uri,
+            "allowed_scopes": "openid profile",
+            "is_confidential": False,
+        },
+    )
+    redirect_uris = client.registered_redirect_uris()
+    if redirect_uri in redirect_uris:
+        return
+
+    redirect_uris.append(redirect_uri)
+    client.redirect_uris = "\n".join(redirect_uris)
+    client.save(update_fields=["redirect_uris"])
+
+
 def _build_authorize_redirect_url(
     request: HttpRequest,
     code_challenge: str,
@@ -65,10 +87,12 @@ def _build_authorize_redirect_url(
     nonce: str,
 ) -> str:
     """Build the authorization redirect URL using the current request host."""
+    redirect_uri = _build_absolute_url(request, "aot_callback")
+    _ensure_demo_client_redirect_uri(redirect_uri)
     query = urlencode(
         {
-            "client_id": "awesome-service",
-            "redirect_uri": _build_absolute_url(request, "aot_callback"),
+            "client_id": DEMO_CLIENT_ID,
+            "redirect_uri": redirect_uri,
             "response_type": "code",
             "scope": "openid profile",
             "state": state,
@@ -222,7 +246,7 @@ def aot_callback(request: HttpRequest) -> HttpResponse:
     token_form_data = {
         "grant_type": "authorization_code",
         "code": auth_code,
-        "client_id": "awesome-service",
+        "client_id": DEMO_CLIENT_ID,
         "redirect_uri": _build_absolute_url(request, "aot_callback"),
         "code_verifier": code_verifier,
     }

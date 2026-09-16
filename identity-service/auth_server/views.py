@@ -62,6 +62,24 @@ def _parse_scopes(scope_value: str | None) -> set[str]:
     return {scope for scope in scope_value.split() if scope}
 
 
+def _profile_claims(user: User, profile: UserProfile | None) -> dict[str, str]:
+    claims = {}
+
+    if user.first_name:
+        claims["given_name"] = user.first_name
+    if user.last_name:
+        claims["family_name"] = user.last_name
+
+    full_name = user.get_full_name()
+    if full_name:
+        claims["name"] = full_name
+
+    if profile and profile.learning_goal:
+        claims["learning_goal"] = profile.learning_goal
+
+    return claims
+
+
 def _append_query_params(url: str, params: dict[str, str]) -> str:
     parsed = urlsplit(url)
     query_params = dict(parse_qsl(parsed.query, keep_blank_values=True))
@@ -532,8 +550,8 @@ def userinfo(request: HttpRequest) -> HttpResponse:
         "sub": str(user.pk),
         "preferred_username": user.username,
     }
-    if profile and "profile" in _parse_scopes(auth_token.scope) and profile.learning_goal:
-        claims["learning_goal"] = profile.learning_goal
+    if "profile" in _parse_scopes(auth_token.scope):
+        claims.update(_profile_claims(user, profile))
 
     return log_response(
         JsonResponse(claims),
@@ -564,7 +582,7 @@ def openid_configuration(request: HttpRequest) -> HttpResponse:
         "id_token_signing_alg_values_supported": ["RS256"],
         "token_endpoint_auth_methods_supported": ["none"],
         "code_challenge_methods_supported": ["plain", "S256"],
-        "claims_supported": ["sub", "preferred_username", "learning_goal"],
+        "claims_supported": ["sub", "preferred_username", "name", "given_name", "family_name", "learning_goal"],
     }
     return log_response(
         JsonResponse(metadata),

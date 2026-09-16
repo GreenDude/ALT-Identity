@@ -6,10 +6,11 @@ from unittest.mock import MagicMock, patch
 from django.test import Client, TestCase, override_settings
 from django.urls import reverse
 
+from auth_server.models import Client as OidcClient
 from aot.views import _generate_pkce_challenge
 
 
-@override_settings(ALLOWED_HOSTS=["127.0.0.1", "testserver"])
+@override_settings(ALLOWED_HOSTS=["127.0.0.1", "192.168.100.88", "testserver"])
 class AotRequestProfileViewTests(TestCase):
     def setUp(self) -> None:
         self.client = Client()
@@ -69,6 +70,48 @@ class AotRequestProfileViewTests(TestCase):
 
         self.assertEqual(parsed.netloc, "127.0.0.1:8000")
         self.assertEqual(query["redirect_uri"], ["http://127.0.0.1:8000/callback"])
+
+    def test_missing_access_token_registers_current_demo_callback_uri(self) -> None:
+        client = Client()
+        OidcClient.objects.update_or_create(
+            client_id="awesome-service",
+            defaults={
+                "name": "Bundled Demo Client",
+                "redirect_uris": "http://localhost:8000/callback",
+                "allowed_scopes": "openid profile",
+                "is_confidential": False,
+            },
+        )
+
+        response = client.get(
+            reverse("aot_request_profile"),
+            HTTP_HOST="192.168.100.88:8900",
+        )
+
+        parsed = urlparse(response["Location"])
+        query = parse_qs(parsed.query)
+        registered_client = OidcClient.objects.get(client_id="awesome-service")
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(parsed.netloc, "192.168.100.88:8900")
+        self.assertEqual(query["redirect_uri"], ["http://192.168.100.88:8900/callback"])
+        self.assertIn("http://localhost:8000/callback", registered_client.registered_redirect_uris())
+        self.assertIn("http://192.168.100.88:8900/callback", registered_client.registered_redirect_uris())
+
+    def test_missing_access_token_creates_demo_client_when_absent(self) -> None:
+        client = Client()
+        OidcClient.objects.filter(client_id="awesome-service").delete()
+
+        response = client.get(
+            reverse("aot_request_profile"),
+            HTTP_HOST="192.168.100.88:8900",
+        )
+
+        registered_client = OidcClient.objects.get(client_id="awesome-service")
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(registered_client.allowed_scopes, "openid profile")
+        self.assertEqual(registered_client.redirect_uris, "http://192.168.100.88:8900/callback")
 
     @patch("aot.views.urlopen")
     def test_profile_forbidden_is_rendered_without_restart_flow(self, mock_urlopen: MagicMock) -> None:

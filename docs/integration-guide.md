@@ -110,6 +110,9 @@ Success response:
 {
   "sub": "1",
   "preferred_username": "demo",
+  "given_name": "Demo",
+  "family_name": "Teacher",
+  "name": "Demo Teacher",
   "learning_goal": "Explore local auth flows"
 }
 ```

@@ -102,7 +102,12 @@ class LoginTemplateTests(TestCase):
 )
 class OidcFlowTests(TestCase):
     def setUp(self) -> None:
-        self.user = User.objects.create_user(username="demo", password="secret123")
+        self.user = User.objects.create_user(
+            username="demo",
+            password="secret123",
+            first_name="Demo",
+            last_name="Teacher",
+        )
         UserProfile.objects.create(user=self.user, learning_goal="Explore local auth flows")
         self.client_record = Client.objects.create(
             client_id="test-client",
@@ -326,6 +331,10 @@ class OidcFlowTests(TestCase):
         self.assertEqual(body["subject_types_supported"], ["public"])
         self.assertEqual(body["id_token_signing_alg_values_supported"], ["RS256"])
         self.assertEqual(body["code_challenge_methods_supported"], ["plain", "S256"])
+        self.assertEqual(
+            body["claims_supported"],
+            ["sub", "preferred_username", "name", "given_name", "family_name", "learning_goal"],
+        )
 
     def test_jwks_exposes_public_signing_key(self) -> None:
         response = self.client.get(reverse("jwks"))
@@ -359,7 +368,35 @@ class OidcFlowTests(TestCase):
             {
                 "sub": str(self.user.pk),
                 "preferred_username": "demo",
+                "given_name": "Demo",
+                "family_name": "Teacher",
+                "name": "Demo Teacher",
                 "learning_goal": "Explore local auth flows",
+            },
+        )
+
+    def test_userinfo_does_not_return_profile_claims_without_profile_scope(self) -> None:
+        token = Token.objects.create(
+            access_token="access-456",
+            refresh_token="refresh-456",
+            token_type="Bearer",
+            user_name="demo",
+            client_id="test-client",
+            expires_in=3600,
+            scope="openid",
+        )
+
+        response = self.client.get(
+            reverse("userinfo"),
+            HTTP_AUTHORIZATION=f"Bearer {token.access_token}",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertJSONEqual(
+            response.content,
+            {
+                "sub": str(self.user.pk),
+                "preferred_username": "demo",
             },
         )
 

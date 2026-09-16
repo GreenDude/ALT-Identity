@@ -177,8 +177,11 @@ UserProfile.objects.create(user=user, learning_goal="Explore local auth flows")
 ### Register a client redirect URI
 
 ALT-Identity validates the exact `redirect_uri` sent to `/auth/authorize` and
-`/auth/token`. If the callback URL is not registered for the client, the
-authorization request fails with `Unregistered redirect_uri.`
+`/auth/token`. The bundled demo client automatically registers its current
+callback URL before starting the flow, so the profile demo works when you open
+the app through `localhost`, `127.0.0.1`, or a LAN address. Other clients still
+need exact redirect URI registration. If the callback URL is not registered for
+the client, the authorization request fails with `Unregistered redirect_uri.`
 
 You can register client redirect URIs through Django admin or the shell:
 
@@ -308,6 +311,9 @@ Success response:
 {
   "sub": "1",
   "preferred_username": "demo",
+  "given_name": "Demo",
+  "family_name": "Teacher",
+  "name": "Demo Teacher",
   "learning_goal": "Explore local auth flows"
 }
 ```

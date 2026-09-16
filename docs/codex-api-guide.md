@@ -174,7 +174,7 @@ through discovery plus the authorization code flow with PKCE.
   "id_token_signing_alg_values_supported": ["RS256"],
   "token_endpoint_auth_methods_supported": ["none"],
   "code_challenge_methods_supported": ["plain", "S256"],
-  "claims_supported": ["sub", "preferred_username", "learning_goal"]
+  "claims_supported": ["sub", "preferred_username", "name", "given_name", "family_name", "learning_goal"]
 }
 ```
 
@@ -256,13 +256,17 @@ Success response:
 {
   "sub": "1",
   "preferred_username": "demo",
+  "given_name": "Demo",
+  "family_name": "Teacher",
+  "name": "Demo Teacher",
   "learning_goal": "Explore local auth flows"
 }
 ```
 
 The current implementation always returns `sub` and `preferred_username`. It
-returns `learning_goal` when the token includes the `profile` scope and the
-user has a profile row.
+returns standard profile claims (`given_name`, `family_name`, and `name`) from
+the Django user record, plus `learning_goal`, when the token includes the
+`profile` scope and those values exist.
 
 ## Codex Implementation Brief for the Consumer Project
 
