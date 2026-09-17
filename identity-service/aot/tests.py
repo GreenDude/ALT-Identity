@@ -131,6 +131,37 @@ class AotRequestProfileViewTests(TestCase):
         self.assertEqual(self.client.session.get("access_token"), "test-access-token")
 
 
+class AotTokenViewerTests(TestCase):
+    def test_token_viewer_renders_session_token_values(self) -> None:
+        client = Client()
+        session = client.session
+        session["access_token"] = "access-token-value"
+        session["refresh_token"] = "refresh-token-value"
+        session["id_token"] = "id-token-value"
+        session["pkce_code_verifier"] = "verifier-value"
+        session["oidc_state"] = "state-value"
+        session["oidc_nonce"] = "nonce-value"
+        session.save()
+
+        response = client.get(reverse("aot_token_viewer"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "aot/tokens.html")
+        self.assertContains(response, "Session Token Viewer")
+        self.assertContains(response, "access-token-value")
+        self.assertContains(response, "refresh-token-value")
+        self.assertContains(response, "id-token-value")
+        self.assertContains(response, "verifier-value")
+        self.assertContains(response, 'id="access_token"', html=False)
+
+    def test_token_viewer_renders_empty_state_without_session_tokens(self) -> None:
+        response = self.client.get(reverse("aot_token_viewer"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "No session tokens")
+        self.assertContains(response, "Not present")
+
+
 @override_settings(ALLOWED_HOSTS=["127.0.0.1", "testserver"])
 class AotCallbackTests(TestCase):
     def setUp(self) -> None:

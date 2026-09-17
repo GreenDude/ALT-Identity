@@ -28,7 +28,10 @@
     <section class="panel">
         <h2>Try the demo</h2>
         <p>The fastest path is to launch the userinfo demo and let the redirects guide you through login, token issuance, and standards-shaped profile retrieval.</p>
-        <a href="{% url 'aot_request_profile' %}" class="button">Start Profile Demo</a>
+        <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+            <a href="{% url 'aot_request_profile' %}" class="button">Start Profile Demo</a>
+            <a href="{% url 'aot_token_viewer' %}" class="button secondary">View Tokens</a>
+        </div>
     </section>
 </div>
 

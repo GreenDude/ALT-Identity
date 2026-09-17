@@ -247,6 +247,8 @@ From the landing page:
    - a readable field list
    - the raw JSON payload
    - a logout button
+5. Open `/tokens` to inspect the access, refresh, and ID token values stored
+   in the current browser session.
 
 ## Integration Endpoints
 

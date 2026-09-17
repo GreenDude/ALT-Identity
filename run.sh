@@ -37,6 +37,6 @@ export ALT_IDENTITY_OIDC_PUBLIC_KEY_PEM="$(cat /tmp/oidc-public.pem)"
 export ALT_IDENTITY_OIDC_KEY_ID="dev-rs256-1"
 
 echo "Starting ALT-Identity at $ALT_IDENTITY_ISSUER"
-uv run ~/PycharmProjects/ALT-Identity/identity-service/manage.py runserver 0.0.0.0:8900
+uv run ~/infra/ALT-Identity/identity-service/manage.py runserver 0.0.0.0:8900
 
 

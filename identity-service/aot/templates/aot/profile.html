@@ -37,6 +37,7 @@
 
 <div style="margin-top: 18px; display: flex; gap: 12px; flex-wrap: wrap;">
     <a href="{% url 'aot_request_profile' %}" class="button secondary">Refresh Profile</a>
+    <a href="{% url 'aot_token_viewer' %}" class="button secondary">View Tokens</a>
     <form method="post" action="{% url 'logout' %}">
         {% csrf_token %}
         <button type="submit" id="logout-button">Logout</button>

@@ -155,6 +155,56 @@ def index(request: HttpRequest) -> HttpResponse:
     )
 
 
+def aot_token_viewer(request: HttpRequest) -> HttpResponse:
+    """Render token material stored in the current demo browser session."""
+    log_inbound_request(request)
+    token_rows = [
+        {
+            "label": "Access token",
+            "session_key": "access_token",
+            "value": request.session.get("access_token"),
+        },
+        {
+            "label": "Refresh token",
+            "session_key": "refresh_token",
+            "value": request.session.get("refresh_token"),
+        },
+        {
+            "label": "ID token",
+            "session_key": "id_token",
+            "value": request.session.get("id_token"),
+        },
+        {
+            "label": "PKCE verifier",
+            "session_key": "pkce_code_verifier",
+            "value": request.session.get("pkce_code_verifier"),
+        },
+        {
+            "label": "OIDC state",
+            "session_key": "oidc_state",
+            "value": request.session.get("oidc_state"),
+        },
+        {
+            "label": "OIDC nonce",
+            "session_key": "oidc_nonce",
+            "value": request.session.get("oidc_nonce"),
+        },
+    ]
+    visible_rows = [row for row in token_rows if row["value"]]
+    return log_response(
+        render(
+            request,
+            "aot/tokens.html",
+            {
+                "token_rows": token_rows,
+                "visible_rows": visible_rows,
+                "has_any_token_value": bool(visible_rows),
+            },
+        ),
+        source="aot.aot_token_viewer",
+    )
+
+
 def aot_service(request: HttpRequest) -> HttpResponse:
     """Placeholder for future demo functionality beyond the profile example."""
     log_inbound_request(request)

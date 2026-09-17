@@ -1,0 +1,49 @@
+{% extends 'auth_server/base.html' %}
+
+{% block tittle %}Token Viewer{% endblock %}
+
+{% block content %}
+<p class="eyebrow">Demo Client</p>
+<h1>Session Token Viewer</h1>
+<p class="lede">Inspect the token material currently stored by this browser session after the bundled OpenID Connect demo flow runs.</p>
+
+<div class="grid two" style="margin-bottom: 18px;">
+    <section class="panel">
+        <h2>Session summary</h2>
+        <dl>
+            {% for row in token_rows %}
+                <dt>{{ row.label }}</dt>
+                <dd>{% if row.value %}<span class="pill success">Stored in session</span>{% else %}<span class="pill warning">Not present</span>{% endif %}</dd>
+            {% endfor %}
+        </dl>
+    </section>
+    <section class="panel">
+        <h2>Actions</h2>
+        <p>Run the profile demo to mint fresh tokens, then return here to inspect what the relying-party has stored.</p>
+        <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+            <a href="{% url 'aot_request_profile' %}" class="button">Run Demo</a>
+            <a href="{% url 'index' %}" class="button secondary">Home</a>
+        </div>
+    </section>
+</div>
+
+{% if has_any_token_value %}
+    <section>
+        <h2>Stored values</h2>
+        <div class="grid">
+            {% for row in visible_rows %}
+                <section class="panel">
+                    <p><span class="pill">{{ row.session_key }}</span></p>
+                    <h3>{{ row.label }}</h3>
+                    <pre id="{{ row.session_key }}">{{ row.value }}</pre>
+                </section>
+            {% endfor %}
+        </div>
+    </section>
+{% else %}
+    <section class="panel">
+        <h2>No session tokens</h2>
+        <p>No tokens are stored in this browser session yet.</p>
+    </section>
+{% endif %}
+{% endblock %}
