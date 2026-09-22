@@ -25,6 +25,7 @@ from django.views.decorators.csrf import csrf_exempt
 from config.http_logging import log_inbound_request, log_response
 
 from .models import AuthCode, Client, Token, UserProfile
+from .forms import RegistrationForm
 from .oidc import build_jwks, get_issuer, sign_jwt
 
 
@@ -193,6 +194,148 @@ def login_view(request: HttpRequest) -> HttpResponse:
         HttpResponseNotAllowed(["GET", "POST"]),
         source="auth_server.login_view",
     )
+
+
+def register_view(request: HttpRequest) -> HttpResponse:
+    """Render the browser client for the test registration API."""
+    log_inbound_request(request)
+    if request.method == "GET":
+        return log_response(
+            render(
+                request,
+                "auth_server/register.html",
+                {
+                    "pending_authorization": request.session.get("pending_authorization"),
+                },
+            ),
+            source="auth_server.register_view",
+        )
+
+    return log_response(
+        HttpResponseNotAllowed(["GET"]),
+        source="auth_server.register_view",
+    )
+
+
+def _registration_api_error(
+    error: str,
+    description: str,
+    status: int,
+    **extra: Any,
+) -> JsonResponse:
+    """Return a consistently JSON-shaped test-registration API error."""
+    return JsonResponse(
+        {"error": error, "error_description": description, **extra},
+        status=status,
+    )
+
+
+@csrf_exempt
+def register_api(request: HttpRequest) -> JsonResponse:
+    """Create and authenticate a test user from a JSON request when enabled."""
+    log_inbound_request(request)
+
+    if not settings.ALT_IDENTITY_TEST_REGISTRATION_API_ENABLED:
+        return log_response(
+            _registration_api_error(
+                "not_found",
+                "Test registration API is disabled.",
+                status=404,
+            ),
+            source="auth_server.register_api",
+        )
+
+    if request.method != "POST":
+        response = _registration_api_error(
+            "method_not_allowed",
+            "Only POST is supported.",
+            status=405,
+        )
+        response["Allow"] = "POST"
+        return log_response(response, source="auth_server.register_api")
+
+    if request.content_type != "application/json":
+        return log_response(
+            _registration_api_error(
+                "unsupported_media_type",
+                "Content-Type must be application/json.",
+                status=415,
+            ),
+            source="auth_server.register_api",
+        )
+
+    try:
+        payload = json.loads(request.body)
+    except json.JSONDecodeError:
+        payload = None
+
+    if not isinstance(payload, dict):
+        return log_response(
+            _registration_api_error(
+                "invalid_request",
+                "Request body must be a JSON object.",
+                status=400,
+            ),
+            source="auth_server.register_api",
+        )
+
+    required_fields = ("username", "first_name", "last_name", "password")
+    if any(not isinstance(payload.get(field), str) for field in required_fields):
+        return log_response(
+            _registration_api_error(
+                "invalid_request",
+                "username, first_name, last_name, and password must be strings.",
+                status=400,
+            ),
+            source="auth_server.register_api",
+        )
+
+    learning_goal = payload.get("learning_goal", "")
+    if not isinstance(learning_goal, str):
+        return log_response(
+            _registration_api_error(
+                "invalid_request",
+                "learning_goal must be a string when provided.",
+                status=400,
+            ),
+            source="auth_server.register_api",
+        )
+
+    form = RegistrationForm(
+        {
+            "username": payload["username"],
+            "first_name": payload["first_name"],
+            "last_name": payload["last_name"],
+            "learning_goal": learning_goal,
+            "password1": payload["password"],
+            "password2": payload["password"],
+        }
+    )
+    if not form.is_valid():
+        return log_response(
+            _registration_api_error(
+                "invalid_request",
+                "Registration details are invalid.",
+                status=400,
+                errors=form.errors.get_json_data(),
+            ),
+            source="auth_server.register_api",
+        )
+
+    user = form.save()
+    login(request, user)
+    profile = UserProfile.objects.get(user=user)
+    next_url = request.session.pop("pending_authorization", "/")
+    response = JsonResponse(
+        {
+            "id": str(user.pk),
+            "username": user.username,
+            **_profile_claims(user, profile),
+            "next_url": next_url,
+        },
+        status=201,
+    )
+    return log_response(response, source="auth_server.register_api")
 
 
 def authorize(request: HttpRequest) -> HttpResponse | HttpResponseRedirect | HttpResponseNotAllowed:

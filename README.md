@@ -148,6 +148,7 @@ export ALT_IDENTITY_SESSION_COOKIE_NAME="alt_identity_sessionid"
 export ALT_IDENTITY_OIDC_PRIVATE_KEY_PEM="$(cat /tmp/oidc-private.pem)"
 export ALT_IDENTITY_OIDC_PUBLIC_KEY_PEM="$(cat /tmp/oidc-public.pem)"
 export ALT_IDENTITY_OIDC_KEY_ID="dev-rs256-1"
+export ALT_IDENTITY_TEST_REGISTRATION_API_ENABLED=true
 ```
 
 If you run ALT-Identity on a different origin, such as `http://127.0.0.1:8900`,
@@ -157,6 +158,40 @@ If another Django app is also running on `127.0.0.1`, keep
 `ALT_IDENTITY_SESSION_COOKIE_NAME` distinct from that app's session cookie
 name. Cookies are shared by host, not port, so using the default Django
 `sessionid` value in both apps can break the OIDC state round-trip.
+
+### Test registration API
+
+For API-driven test setup, opt in to the JSON registration endpoint:
+
+```sh
+export ALT_IDENTITY_TEST_REGISTRATION_API_ENABLED=true
+```
+
+With the flag enabled, `POST /auth/api/register` accepts JSON and returns
+JSON. It creates the user and authenticates the request session, so a cookie
+jar can continue directly into an OIDC authorization flow. The endpoint is
+disabled by default and responds with JSON `404` while disabled.
+
+`./run.sh` enables the endpoint by default for local testing. Set
+`ALT_IDENTITY_TEST_REGISTRATION_API_ENABLED=false` to disable it. The browser
+registration page at `/auth/register` is a thin client of this endpoint.
+
+```sh
+curl -i -c cookies.txt \
+  -H 'Content-Type: application/json' \
+  --data '{
+    "username": "api_teacher",
+    "first_name": "ActualFirstName",
+    "last_name": "ActualLastName",
+    "learning_goal": "OIDC integration testing",
+    "password": "UncommonPass12345!"
+  }' \
+  http://localhost:8900/auth/api/register
+```
+
+A successful response has status `201` and includes `id`, `username`,
+`given_name`, `family_name`, `name`, and `next_url` for the next browser or
+automation request.
 
 ### Create a demo user profile
 
@@ -241,7 +276,8 @@ ALT_IDENTITY_VERBOSE_HTTP_LOGGING = False
 From the landing page:
 
 1. Click `Profile demo`.
-2. Log in when redirected to `/auth/login`.
+2. Log in when redirected to `/auth/login`, or create a local account at
+   `/auth/register`.
 3. Approve the implicit demo flow by continuing through the redirect sequence.
 4. Review the resulting profile page, which shows:
    - a readable field list
@@ -301,6 +337,15 @@ Success response:
   "scope": "openid profile"
 }
 ```
+
+### Test registration endpoint
+
+- URL: `POST /auth/api/register`
+- Availability: only when `ALT_IDENTITY_TEST_REGISTRATION_API_ENABLED=true`
+- Header: `Content-Type: application/json`
+- Request fields: `username`, `first_name`, `last_name`, `password`, plus
+  optional `learning_goal`
+- Success: `201 Created` JSON and an authenticated session cookie
 
 ### UserInfo endpoint
 

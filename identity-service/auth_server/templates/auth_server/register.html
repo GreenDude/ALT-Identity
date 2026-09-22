@@ -1,0 +1,78 @@
+{% extends 'auth_server/base.html' %}
+
+{% block tittle %}Register{% endblock %}
+
+{% block content %}
+<p class="eyebrow">Identity Provider</p>
+<h1>Create Test Account</h1>
+<p class="lede">Create a local user for OIDC testing. The profile fields become standard UserInfo claims when a client requests the <code>profile</code> scope.</p>
+
+<div class="grid two">
+    <section class="panel">
+        <h2>Account details</h2>
+        <form id="registration-form" data-api-url="{% url 'register_api' %}">
+            <p><label for="register-username-field">Username:</label> <input type="text" name="username" maxlength="150" autocomplete="username" autofocus id="register-username-field" required></p>
+            <p><label for="register-first-name-field">First name:</label> <input type="text" name="first_name" maxlength="150" id="register-first-name-field" required></p>
+            <p><label for="register-last-name-field">Last name:</label> <input type="text" name="last_name" maxlength="150" id="register-last-name-field" required></p>
+            <p><label for="register-learning-goal-field">Learning goal:</label> <textarea name="learning_goal" id="register-learning-goal-field"></textarea></p>
+            <p><label for="register-password-field">Password:</label> <input type="password" name="password" autocomplete="new-password" id="register-password-field" required></p>
+            <p id="registration-error" class="pill warning" role="alert" hidden></p>
+            <button type="submit" id="register-button">Create Account</button>
+        </form>
+    </section>
+    <section class="panel">
+        <h2>What happens next</h2>
+        {% if pending_authorization %}
+            <p><span class="pill success">Pending authorization detected</span></p>
+            <p>After account creation, the browser will resume this request:</p>
+            <pre>{{ pending_authorization }}</pre>
+        {% else %}
+            <p><span class="pill warning">Standalone registration</span></p>
+            <p>After account creation, the browser will return to the home page.</p>
+        {% endif %}
+        <p>Already have an account? <a href="{% url 'login' %}">Sign in</a>.</p>
+    </section>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    const registrationForm = document.getElementById("registration-form");
+    const registrationError = document.getElementById("registration-error");
+    const registrationButton = document.getElementById("register-button");
+
+    registrationForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        registrationError.hidden = true;
+        registrationButton.disabled = true;
+
+        const formData = new FormData(registrationForm);
+        const payload = Object.fromEntries(formData.entries());
+
+        try {
+            const response = await fetch(registrationForm.dataset.apiUrl, {
+                method: "POST",
+                credentials: "same-origin",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload),
+            });
+            const body = await response.json();
+
+            if (!response.ok) {
+                const fieldErrors = Object.values(body.errors || {})
+                    .flatMap((errors) => errors.map((error) => error.message));
+                registrationError.textContent = fieldErrors.join(" ") || body.error_description || "Registration failed.";
+                registrationError.hidden = false;
+                return;
+            }
+
+            window.location.assign(body.next_url || "/");
+        } catch (error) {
+            registrationError.textContent = "Registration request failed.";
+            registrationError.hidden = false;
+        } finally {
+            registrationButton.disabled = false;
+        }
+    });
+</script>
+{% endblock %}

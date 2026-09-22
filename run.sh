@@ -2,6 +2,9 @@
 
 set -eu
 
+SCRIPT_DIR=$(CDPATH= cd "$(dirname "$0")" && pwd)
+MANAGE_PY="$SCRIPT_DIR/identity-service/manage.py"
+
 detect_lan_ip() {
     if command -v ip >/dev/null 2>&1; then
         ip route get 1.1.1.1 2>/dev/null \
@@ -35,8 +38,7 @@ export ALT_IDENTITY_SESSION_COOKIE_NAME="alt_identity_sessionid"
 export ALT_IDENTITY_OIDC_PRIVATE_KEY_PEM="$(cat /tmp/oidc-private.pem)"
 export ALT_IDENTITY_OIDC_PUBLIC_KEY_PEM="$(cat /tmp/oidc-public.pem)"
 export ALT_IDENTITY_OIDC_KEY_ID="dev-rs256-1"
+export ALT_IDENTITY_TEST_REGISTRATION_API_ENABLED=${ALT_IDENTITY_TEST_REGISTRATION_API_ENABLED:-true}
 
 echo "Starting ALT-Identity at $ALT_IDENTITY_ISSUER"
-uv run ~/infra/ALT-Identity/identity-service/manage.py runserver 0.0.0.0:8900
-
-
+uv run "$MANAGE_PY" runserver 0.0.0.0:8900

@@ -93,6 +93,121 @@ class LoginTemplateTests(TestCase):
         self.assertContains(response, 'id="password-field"', html=False)
         self.assertContains(response, 'id="login-button"', html=False)
 
+    def test_register_page_is_a_client_for_the_registration_api(self) -> None:
+        response = self.client.get(reverse("register"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'id="registration-form"', html=False)
+        self.assertContains(response, 'data-api-url="/auth/api/register"', html=False)
+        self.assertContains(response, 'id="register-username-field"', html=False)
+        self.assertContains(response, 'id="register-first-name-field"', html=False)
+        self.assertContains(response, 'id="register-last-name-field"', html=False)
+        self.assertContains(response, 'id="register-learning-goal-field"', html=False)
+        self.assertContains(response, 'id="register-password-field"', html=False)
+        self.assertContains(response, 'id="register-button"', html=False)
+        self.assertContains(response, "fetch(registrationForm.dataset.apiUrl", html=False)
+        self.assertNotContains(response, "csrfmiddlewaretoken")
+
+
+@override_settings(ALT_IDENTITY_TEST_REGISTRATION_API_ENABLED=True)
+class RegistrationApiTests(TestCase):
+    def _request(self, payload: dict[str, object]):
+        return self.client.post(
+            reverse("register_api"),
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+
+    def test_registration_api_is_disabled_by_default(self) -> None:
+        with self.settings(ALT_IDENTITY_TEST_REGISTRATION_API_ENABLED=False):
+            response = self._request({})
+
+        self.assertEqual(response.status_code, 404)
+        self.assertJSONEqual(
+            response.content,
+            {
+                "error": "not_found",
+                "error_description": "Test registration API is disabled.",
+            },
+        )
+
+    def test_registration_api_creates_user_profile_and_session(self) -> None:
+        response = self._request(
+            {
+                "username": "api-teacher",
+                "first_name": "API",
+                "last_name": "Teacher",
+                "learning_goal": "Automate OIDC tests",
+                "password": "UncommonPass12345!",
+            }
+        )
+
+        self.assertEqual(response.status_code, 201)
+        body = response.json()
+        user = User.objects.get(username="api-teacher")
+        self.assertEqual(
+            body,
+            {
+                "id": str(user.pk),
+                "username": "api-teacher",
+                "given_name": "API",
+                "family_name": "Teacher",
+                "name": "API Teacher",
+                "learning_goal": "Automate OIDC tests",
+                "next_url": "/",
+            },
+        )
+        self.assertEqual(UserProfile.objects.get(user=user).learning_goal, "Automate OIDC tests")
+        self.assertEqual(int(self.client.session["_auth_user_id"]), user.pk)
+
+    def test_registration_api_returns_pending_authorization_url(self) -> None:
+        session = self.client.session
+        session["pending_authorization"] = "/auth/authorize?client_id=test-client"
+        session.save()
+
+        response = self._request(
+            {
+                "username": "pending-api-teacher",
+                "first_name": "Pending",
+                "last_name": "Teacher",
+                "password": "UncommonPass12345!",
+            }
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.json()["next_url"], "/auth/authorize?client_id=test-client")
+        self.assertNotIn("pending_authorization", self.client.session)
+
+    def test_registration_api_rejects_invalid_json_without_html(self) -> None:
+        response = self.client.post(
+            reverse("register_api"),
+            data="not-json",
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response["Content-Type"], "application/json")
+        self.assertJSONEqual(
+            response.content,
+            {
+                "error": "invalid_request",
+                "error_description": "Request body must be a JSON object.",
+            },
+        )
+
+    def test_registration_api_rejects_non_json_requests(self) -> None:
+        response = self.client.post(reverse("register_api"), {"username": "api-teacher"})
+
+        self.assertEqual(response.status_code, 415)
+        self.assertEqual(response["Content-Type"], "application/json")
+        self.assertJSONEqual(
+            response.content,
+            {
+                "error": "unsupported_media_type",
+                "error_description": "Content-Type must be application/json.",
+            },
+        )
+
 
 @override_settings(
     ALT_IDENTITY_ISSUER="http://localhost:8000",

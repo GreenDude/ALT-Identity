@@ -20,6 +20,7 @@ The important endpoints are:
 - Token: `POST /auth/token`
 - UserInfo: `GET /auth/userinfo`
 - Login UI: `GET /auth/login`
+- Test registration: `POST /auth/api/register` when explicitly enabled
 
 The current implementation issues:
 
@@ -71,10 +72,14 @@ export ALT_IDENTITY_SESSION_COOKIE_NAME="alt_identity_sessionid"
 export ALT_IDENTITY_OIDC_PRIVATE_KEY_PEM="$(cat oidc-private.pem)"
 export ALT_IDENTITY_OIDC_PUBLIC_KEY_PEM="$(cat oidc-public.pem)"
 export ALT_IDENTITY_OIDC_KEY_ID="dev-rs256-1"
+export ALT_IDENTITY_TEST_REGISTRATION_API_ENABLED=true
 ```
 
 If `ALT_IDENTITY_OIDC_PUBLIC_KEY_PEM` is omitted, ALT-Identity derives the
 public key from the private key.
+
+`ALT_IDENTITY_TEST_REGISTRATION_API_ENABLED` defaults to `false`. Set it to
+`true` only for test environments that need JSON-based account setup.
 
 If the consuming app is also a Django app on `127.0.0.1`, do not let both apps
 share the default `sessionid` cookie name. ALT-Identity should use
