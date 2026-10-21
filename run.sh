@@ -33,7 +33,7 @@ openssl genpkey -algorithm RSA -out /tmp/oidc-private.pem -pkeyopt rsa_keygen_bi
 openssl pkey -in /tmp/oidc-private.pem -pubout -out /tmp/oidc-public.pem
 
 export ALT_IDENTITY_ISSUER=${ALT_IDENTITY_ISSUER:-"http://$ALT_IDENTITY_HOST:8900"}
-export ALT_IDENTITY_ALLOWED_HOSTS=${ALT_IDENTITY_ALLOWED_HOSTS:-"$ALT_IDENTITY_HOST,localhost,127.0.0.1"}
+export ALT_IDENTITY_ALLOWED_HOSTS=${ALT_IDENTITY_ALLOWED_HOSTS:-"$ALT_IDENTITY_HOST,host.containers.internal,localhost,127.0.0.1"}
 export ALT_IDENTITY_SESSION_COOKIE_NAME="alt_identity_sessionid"
 export ALT_IDENTITY_OIDC_PRIVATE_KEY_PEM="$(cat /tmp/oidc-private.pem)"
 export ALT_IDENTITY_OIDC_PUBLIC_KEY_PEM="$(cat /tmp/oidc-public.pem)"
