@@ -5,7 +5,7 @@
 {% block content %}
 <p class="eyebrow">Demo Client</p>
 <h1>Profile Response</h1>
-<p class="lede">The relying-party has completed the authorization-code flow and used the bearer token to call the protected profile endpoint. This page renders both a readable field view and the raw JSON payload for quick inspection during demos and tests.</p>
+<p class="lede">The relying-party has completed the OpenID Connect authorization-code flow and used the bearer token to call the protected userinfo endpoint. This page renders both a readable field view and the raw JSON payload for quick inspection during demos and tests.</p>
 
 <div class="grid two">
     <section class="panel">
@@ -13,6 +13,7 @@
         <p><span class="pill {% if response_status == 200 %}success{% else %}warning{% endif %}">HTTP {{ response_status }}</span></p>
         <p>Access token in session: {% if access_token_present %}yes{% else %}no{% endif %}</p>
         <p>Refresh token in session: {% if refresh_token_present %}yes{% else %}no{% endif %}</p>
+        <p>ID token in session: {% if id_token_present %}yes{% else %}no{% endif %}</p>
     </section>
     <section class="panel">
         <h2>Rendered fields</h2>
@@ -36,6 +37,7 @@
 
 <div style="margin-top: 18px; display: flex; gap: 12px; flex-wrap: wrap;">
     <a href="{% url 'aot_request_profile' %}" class="button secondary">Refresh Profile</a>
+    <a href="{% url 'aot_token_viewer' %}" class="button secondary">View Tokens</a>
     <form method="post" action="{% url 'logout' %}">
         {% csrf_token %}
         <button type="submit" id="logout-button">Logout</button>

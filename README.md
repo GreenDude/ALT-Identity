@@ -1,6 +1,6 @@
 # ALT-Identity
 
-ALT-Identity is a simple OIDC-like identity service built with Django. It is
+ALT-Identity is a simple OpenID Connect identity service built with Django. It is
 meant for early development, local testing, demos, and browser automation
 scenarios where teams need a lightweight identity provider without standing up a
 full production auth stack.
@@ -13,7 +13,7 @@ identity provider.
 The repository includes both sides of the flow:
 
 - `auth_server`: a compact identity provider with login, authorization, token,
-  logout, and profile endpoints.
+  logout, discovery, JWKS, and userinfo endpoints.
 - `aot`: the bundled demo client that drives the authorization-code flow and
   renders the resulting profile response as a readable HTML page.
 
@@ -58,8 +58,9 @@ drop-in production identity provider.
 - Django session-backed login using the built-in authentication system.
 - Authorization endpoint that issues short-lived, single-use auth codes.
 - PKCE support for authorization-code clients using `plain` or `S256`.
-- Token endpoint that exchanges codes for bearer-style access and refresh tokens.
-- Profile endpoint protected by `Authorization: Bearer ...`.
+- Token endpoint that exchanges codes for bearer-style access and refresh tokens plus an RS256-signed `id_token`.
+- OpenID Connect discovery and JWKS publication.
+- UserInfo endpoint protected by `Authorization: Bearer ...`.
 - Demo client page that shows profile data in human-readable HTML and formatted
   JSON.
 - Logout button on the demo profile page.
@@ -74,7 +75,8 @@ ALT-Identity/
 ├── README.md
 ├── docs/
 │   ├── architecture.md
-│   └── integration-guide.md
+│   ├── integration-guide.md
+│   └── project-spec.md
 └── identity-service/
     ├── manage.py
     ├── config/
@@ -87,19 +89,18 @@ ALT-Identity/
 
 1. A browser visits the demo client endpoint at `/profile`.
 2. If no access token is stored in the browser session, the client redirects to
-   `/auth/authorize`.
+   `/auth/authorize` with `scope=openid profile`, `state`, `nonce`, and PKCE.
 3. If the user is not logged in, the auth server stores the pending request in
    session and redirects the browser to `/auth/login`.
 4. After login, the auth server returns to `/auth/authorize`, creates an
    authorization code bound to the PKCE challenge, and redirects to the
    configured callback.
-5. The callback exchanges the authorization code at `/auth/token` using the
-   original `code_verifier`.
-6. The bundled demo client stores the returned tokens in session and requests
-   `/auth/profile` with a bearer token.
-7. The profile response is rendered as HTML for humans and automation tooling.
+5. The callback verifies `state` and exchanges the authorization code at `/auth/token` using the original `code_verifier`.
+6. The bundled demo client stores the returned access, refresh, and ID tokens in session and requests `/auth/userinfo` with a bearer token.
+7. The userinfo response is rendered as HTML for humans and automation tooling.
 
-More detail is in [docs/architecture.md](docs/architecture.md).
+More detail is in [docs/architecture.md](docs/architecture.md) and the
+[project specification](docs/project-spec.md).
 
 ## Quick Start
 
@@ -129,6 +130,71 @@ python3 manage.py migrate
 python3 manage.py createsuperuser
 ```
 
+### Configure OIDC signing keys
+
+ALT-Identity signs `id_token`s with RS256. The token endpoint will return
+`{"error": "server_error"}` until a private signing key is configured.
+
+Generate a local development keypair:
+
+```bash
+openssl genpkey -algorithm RSA -out /tmp/oidc-private.pem -pkeyopt rsa_keygen_bits:2048
+openssl pkey -in /tmp/oidc-private.pem -pubout -out /tmp/oidc-public.pem
+```
+
+Set the runtime environment before starting Django:
+
+```bash
+export ALT_IDENTITY_ISSUER="http://localhost:8000"
+export ALT_IDENTITY_SESSION_COOKIE_NAME="alt_identity_sessionid"
+export ALT_IDENTITY_OIDC_PRIVATE_KEY_PEM="$(cat /tmp/oidc-private.pem)"
+export ALT_IDENTITY_OIDC_PUBLIC_KEY_PEM="$(cat /tmp/oidc-public.pem)"
+export ALT_IDENTITY_OIDC_KEY_ID="dev-rs256-1"
+export ALT_IDENTITY_TEST_REGISTRATION_API_ENABLED=true
+```
+
+If you run ALT-Identity on a different origin, such as `http://127.0.0.1:8900`,
+set `ALT_IDENTITY_ISSUER` to that exact origin.
+
+If another Django app is also running on `127.0.0.1`, keep
+`ALT_IDENTITY_SESSION_COOKIE_NAME` distinct from that app's session cookie
+name. Cookies are shared by host, not port, so using the default Django
+`sessionid` value in both apps can break the OIDC state round-trip.
+
+### Test registration API
+
+For API-driven test setup, opt in to the JSON registration endpoint:
+
+```sh
+export ALT_IDENTITY_TEST_REGISTRATION_API_ENABLED=true
+```
+
+With the flag enabled, `POST /auth/api/register` accepts JSON and returns
+JSON. It creates the user and authenticates the request session, so a cookie
+jar can continue directly into an OIDC authorization flow. The endpoint is
+disabled by default and responds with JSON `404` while disabled.
+
+`./run.sh` enables the endpoint by default for local testing. Set
+`ALT_IDENTITY_TEST_REGISTRATION_API_ENABLED=false` to disable it. The browser
+registration page at `/auth/register` is a thin client of this endpoint.
+
+```sh
+curl -i -c cookies.txt \
+  -H 'Content-Type: application/json' \
+  --data '{
+    "username": "api_teacher",
+    "first_name": "ActualFirstName",
+    "last_name": "ActualLastName",
+    "learning_goal": "OIDC integration testing",
+    "password": "UncommonPass12345!"
+  }' \
+  http://localhost:8900/auth/api/register
+```
+
+A successful response has status `201` and includes `id`, `username`,
+`given_name`, `family_name`, `name`, and `next_url` for the next browser or
+automation request.
+
 ### Create a demo user profile
 
 Use the Django admin at `/admin/` or a shell session:
@@ -144,6 +210,48 @@ from auth_server.models import UserProfile
 user = User.objects.create_user(username="demo", password="demo-pass")
 UserProfile.objects.create(user=user, learning_goal="Explore local auth flows")
 ```
+
+### Register a client redirect URI
+
+ALT-Identity validates the exact `redirect_uri` sent to `/auth/authorize` and
+`/auth/token`. The bundled demo client automatically registers its current
+callback URL before starting the flow, so the profile demo works when you open
+the app through `localhost`, `127.0.0.1`, or a LAN address. Other clients still
+need exact redirect URI registration. If the callback URL is not registered for
+the client, the authorization request fails with `Unregistered redirect_uri.`
+
+You can register client redirect URIs through Django admin or the shell:
+
+```bash
+python3 manage.py shell
+```
+
+```python
+from auth_server.models import Client
+
+client, _ = Client.objects.get_or_create(
+    client_id="awesome-service",
+    defaults={
+        "name": "Bundled Demo Client",
+        "redirect_uris": "http://localhost:8000/callback",
+        "allowed_scopes": "openid profile",
+        "is_confidential": False,
+    },
+)
+
+uris = set(client.registered_redirect_uris())
+uris.add("http://127.0.0.1:8900/callback")
+client.redirect_uris = "\n".join(sorted(uris))
+client.save()
+```
+
+Notes:
+
+- `redirect_uri` matching is exact, so `localhost` and `127.0.0.1` are treated
+  as different values.
+- The same exact callback URL must be used during both the authorize request
+  and the token exchange.
+- Multiple redirect URIs are stored as newline-separated values on the client.
 
 ### Run the app
 
@@ -170,14 +278,25 @@ ALT_IDENTITY_VERBOSE_HTTP_LOGGING = False
 From the landing page:
 
 1. Click `Profile demo`.
-2. Log in when redirected to `/auth/login`.
+2. Log in when redirected to `/auth/login`, or create a local account at
+   `/auth/register`.
 3. Approve the implicit demo flow by continuing through the redirect sequence.
 4. Review the resulting profile page, which shows:
    - a readable field list
    - the raw JSON payload
    - a logout button
+5. Open `/tokens` to inspect the access, refresh, and ID token values stored
+   in the current browser session.
 
 ## Integration Endpoints
+
+### Discovery endpoint
+
+- URL: `GET /.well-known/openid-configuration`
+
+### JWKS endpoint
+
+- URL: `GET /.well-known/jwks.json`
 
 ### Authorization endpoint
 
@@ -186,14 +305,16 @@ From the landing page:
   - `client_id`
   - `redirect_uri`
   - `response_type=code`
-  - `scope` optional
-  - `code_challenge` optional but recommended
-  - `code_challenge_method` optional, supports `plain` and `S256`
+  - `scope=openid profile`
+  - `state`
+  - `nonce`
+  - `code_challenge`
+  - `code_challenge_method`, supports `plain` and `S256`
 
 Successful requests redirect to:
 
 ```text
-{redirect_uri}?code={authorization_code}
+{redirect_uri}?code={authorization_code}&state={state}
 ```
 
 ### Token endpoint
@@ -212,22 +333,36 @@ Success response:
 {
   "access_token": "string",
   "refresh_token": "string",
+  "id_token": "string",
   "token_type": "Bearer",
   "expires_in": 3600,
-  "scope": "profile.read"
+  "scope": "openid profile"
 }
 ```
 
-### Profile endpoint
+### Test registration endpoint
 
-- URL: `GET /auth/profile`
+- URL: `POST /auth/api/register`
+- Availability: only when `ALT_IDENTITY_TEST_REGISTRATION_API_ENABLED=true`
+- Header: `Content-Type: application/json`
+- Request fields: `username`, `first_name`, `last_name`, `password`, plus
+  optional `learning_goal`
+- Success: `201 Created` JSON and an authenticated session cookie
+
+### UserInfo endpoint
+
+- URL: `GET /auth/userinfo`
 - Header: `Authorization: Bearer {access_token}`
 
 Success response:
 
 ```json
 {
-  "user_name": "demo",
+  "sub": "1",
+  "preferred_username": "demo",
+  "given_name": "Demo",
+  "family_name": "Teacher",
+  "name": "Demo Teacher",
   "learning_goal": "Explore local auth flows"
 }
 ```
@@ -277,3 +412,4 @@ Common next steps if you want to integrate this into a larger local platform:
 
 - [Architecture overview](docs/architecture.md)
 - [Integration guide](docs/integration-guide.md)
+- [Project specification](docs/project-spec.md)

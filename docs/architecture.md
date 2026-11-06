@@ -2,8 +2,8 @@
 
 ## Purpose
 
-ALT-Identity provides a compact local identity service that behaves enough like
-an OAuth 2.0 / OIDC authorization-code flow to support early integration work,
+ALT-Identity provides a compact local identity service that implements a
+standards-shaped OpenID Connect authorization-code flow to support early integration work,
 test automation, and demos.
 
 ## Main Components
@@ -13,10 +13,11 @@ test automation, and demos.
 The identity-provider app. It is responsible for:
 
 - authenticating users with Django's built-in auth system
+- publishing OIDC discovery metadata and JWKS
 - issuing authorization codes
 - storing PKCE challenges on authorization codes
-- exchanging authorization codes for access and refresh tokens
-- serving a protected profile endpoint
+- exchanging authorization codes for access, refresh, and ID tokens
+- serving a protected userinfo endpoint
 - logging the browser session out
 
 ### `aot`
@@ -28,8 +29,8 @@ responsible for:
 - handling the callback
 - exchanging the authorization code for tokens
 - storing tokens in the browser session
-- requesting the protected profile endpoint
-- rendering the profile response as human-readable HTML
+- requesting the protected userinfo endpoint
+- rendering the userinfo response as human-readable HTML
 
 ### `resource_server`
 
@@ -38,14 +39,25 @@ if the project grows beyond a single profile endpoint.
 
 ## Data Model
 
+### `Client`
+
+Represents a registered relying party, including:
+
+- client id
+- allowed redirect URIs
+- allowed scopes
+- confidentiality mode
+
 ### `AuthCode`
 
 Represents a short-lived authorization code bound to:
 
 - a username
-- a client id
+- a validated client id
 - a redirect URI
-- an optional scope string
+- an OIDC state value
+- an OIDC nonce value
+- an issued scope string
 - an expiry timestamp
 - a single-use flag
 
@@ -76,17 +88,17 @@ sequenceDiagram
 
     Browser->>AOT: GET /profile
     AOT-->>Browser: Redirect to /auth/authorize if no token
-    Browser->>Auth: GET /auth/authorize
+    Browser->>Auth: GET /auth/authorize with state, nonce, and PKCE
     Auth-->>Browser: Redirect to /auth/login if not authenticated
     Browser->>Auth: POST /auth/login
     Auth-->>Browser: Redirect back to pending /auth/authorize
     Browser->>Auth: GET /auth/authorize
-    Auth-->>Browser: Redirect to /callback?code=...
-    Browser->>AOT: GET /callback?code=...
+    Auth-->>Browser: Redirect to /callback?code=...&state=...
+    Browser->>AOT: GET /callback?code=...&state=...
     AOT->>Auth: POST /auth/token with code_verifier
     Auth-->>AOT: JSON token payload
-    AOT->>Auth: GET /auth/profile with bearer token
-    Auth-->>AOT: JSON profile payload
+    AOT->>Auth: GET /auth/userinfo with bearer token
+    Auth-->>AOT: JSON userinfo payload
     AOT-->>Browser: Render profile HTML
 ```
 
@@ -96,8 +108,9 @@ Two different storage mechanisms are used:
 
 - Django browser session:
   - login state for the human user
-  - bundled demo client's `access_token` and `refresh_token`
+  - bundled demo client's `access_token`, `refresh_token`, `id_token`, `state`, and `nonce`
 - Database models:
+  - registered clients
   - issued authorization codes
   - issued tokens
   - user profile data
@@ -109,13 +122,10 @@ local development and test environments, not for production identity workloads.
 
 Important simplifications:
 
-- no client registry
 - no client secret validation
-- no signed JWTs
 - no refresh-token exchange endpoint
 - no consent UI
-- limited scope handling
-- limited redirect-URI validation
+- limited scope handling beyond `openid` and `profile`
 
 PKCE is supported for authorization-code exchanges and is used by the bundled
 demo client with the `S256` method.

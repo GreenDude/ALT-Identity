@@ -1,11 +1,11 @@
 {% extends 'auth_server/base.html' %}
 
-{% block tittle %}Profile Endpoint{% endblock %}
+{% block tittle %}UserInfo Endpoint{% endblock %}
 
 {% block content %}
 <p class="eyebrow">Identity Provider</p>
-<h1>Protected Profile Endpoint</h1>
-<p class="lede">This endpoint returns the logged-in user profile as JSON when the request includes a valid <code>Authorization: Bearer ...</code> header. The bundled client uses the access token from the token exchange and renders the JSON on its profile page.</p>
+<h1>Protected UserInfo Endpoint</h1>
+<p class="lede">This endpoint returns the authenticated user's OpenID Connect claims as JSON when the request includes a valid <code>Authorization: Bearer ...</code> header. The bundled client uses the access token from the token exchange and renders the JSON on its profile page.</p>
 
 <div class="grid two">
     <section class="panel">
@@ -15,15 +15,24 @@
     </section>
     <section class="panel">
         <h2>Endpoint URL</h2>
-        <pre>{{ endpoint_examples.profile_url }}</pre>
+        <pre>{{ endpoint_examples.userinfo_url }}</pre>
     </section>
 </div>
 
 <section class="panel" style="margin-top: 18px;">
     <h2>Success response</h2>
 <pre>{
-  "user_name": "demo",
+  "sub": "1",
+  "preferred_username": "demo",
+  "given_name": "Demo",
+  "family_name": "Teacher",
+  "name": "Demo Teacher",
   "learning_goal": "Explore local auth flows"
 }</pre>
+</section>
+
+<section class="panel" style="margin-top: 18px;">
+    <h2>Discovery document</h2>
+    <pre>{{ endpoint_examples.configuration_url }}</pre>
 </section>
 {% endblock %}

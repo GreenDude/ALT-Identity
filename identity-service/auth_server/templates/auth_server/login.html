@@ -32,6 +32,7 @@
             <p><span class="pill warning">Standalone login</span></p>
             <p>No pending authorization request is stored in session, so a successful login will return to the home page.</p>
         {% endif %}
+        <p>Need a test account? <a href="{% url 'register' %}">Create one</a>.</p>
     </section>
 </div>
 {% endblock %}

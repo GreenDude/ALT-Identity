@@ -9,7 +9,7 @@ CI workflow.
 
 ## Core Integration Contract
 
-Your client application needs to support the usual authorization-code pattern:
+Your client application needs to support the OpenID Connect authorization-code pattern:
 
 1. redirect users to the authorization endpoint
 2. receive an authorization code on a callback URL
@@ -22,13 +22,21 @@ The bundled demo client uses these values:
 
 - `client_id`: `awesome-service`
 - `redirect_uri`: `http://localhost:8000/callback`
-- `scope`: `profile.read`
+- `scope`: `openid profile`
 - `code_challenge_method`: `S256`
 
 If you are integrating another local application, keep your callback handling
 compatible with the server's current expectations.
 
 ## Endpoint Reference
+
+### `GET /.well-known/openid-configuration`
+
+Publishes the OpenID Connect discovery metadata.
+
+### `GET /.well-known/jwks.json`
+
+Publishes the RSA public signing key for `id_token` verification.
 
 ### `GET /auth/authorize`
 
@@ -39,7 +47,9 @@ Query parameters:
 - `client_id`: identifier for the client application
 - `redirect_uri`: where the auth code should be returned
 - `response_type`: must be `code`
-- `scope`: optional space-delimited or custom scope string
+- `scope`: should include `openid`, and may include `profile`
+- `state`: required anti-forgery value echoed on the callback
+- `nonce`: required value that will be bound into the resulting `id_token`
 - `code_challenge`: PKCE code challenge for the request
 - `code_challenge_method`: `plain` or `S256`
 
@@ -69,9 +79,10 @@ Success response:
 {
   "access_token": "string",
   "refresh_token": "string",
+  "id_token": "string",
   "token_type": "Bearer",
   "expires_in": 3600,
-  "scope": "profile.read"
+  "scope": "openid profile"
 }
 ```
 
@@ -83,7 +94,7 @@ Failure response:
 }
 ```
 
-### `GET /auth/profile`
+### `GET /auth/userinfo`
 
 Returns a basic profile document.
 
@@ -97,7 +108,11 @@ Success response:
 
 ```json
 {
-  "user_name": "demo",
+  "sub": "1",
+  "preferred_username": "demo",
+  "given_name": "Demo",
+  "family_name": "Teacher",
+  "name": "Demo Teacher",
   "learning_goal": "Explore local auth flows"
 }
 ```
@@ -117,7 +132,7 @@ Common error responses:
 ### Step 1: Redirect to authorize
 
 ```text
-http://localhost:8000/auth/authorize?client_id=my-client&redirect_uri=http://localhost:3000/callback&response_type=code&scope=profile.read&code_challenge=PKCE_CHALLENGE&code_challenge_method=S256
+http://localhost:8000/auth/authorize?client_id=my-client&redirect_uri=http://localhost:3000/callback&response_type=code&scope=openid%20profile&state=STATE_VALUE&nonce=NONCE_VALUE&code_challenge=PKCE_CHALLENGE&code_challenge_method=S256
 ```
 
 ### Step 2: Receive callback
@@ -137,10 +152,10 @@ curl -X POST http://localhost:8000/auth/token \
   -d "code_verifier=ORIGINAL_PKCE_VERIFIER"
 ```
 
-### Step 4: Call the profile endpoint
+### Step 4: Call the userinfo endpoint
 
 ```bash
-curl http://localhost:8000/auth/profile \
+curl http://localhost:8000/auth/userinfo \
   -H "Authorization: Bearer ACCESS_TOKEN_HERE"
 ```
 

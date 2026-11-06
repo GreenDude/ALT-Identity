@@ -14,22 +14,39 @@ payload manually and automate the flow with browser-based tests.
 
 import base64
 import json
+import logging
 import secrets
 from hashlib import sha256
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+from django.conf import settings
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import render, redirect
 from django.urls import reverse
 
+from auth_server.models import Client
 from config.http_logging import log_inbound_request, log_outbound_request, log_outbound_response, log_response
+
+
+LOGGER = logging.getLogger("alt_identity.http")
+DEMO_CLIENT_ID = "awesome-service"
 
 
 def _generate_pkce_verifier() -> str:
     """Create a high-entropy PKCE code verifier for the demo client."""
     return secrets.token_urlsafe(64)
+
+
+def _generate_state() -> str:
+    """Create a stable anti-forgery state value for the auth redirect."""
+    return secrets.token_urlsafe(32)
+
+
+def _generate_nonce() -> str:
+    """Create a nonce value that will be bound into the resulting id_token."""
+    return secrets.token_urlsafe(32)
 
 
 def _generate_pkce_challenge(verifier: str) -> str:
@@ -43,14 +60,43 @@ def _build_absolute_url(request: HttpRequest, route_name: str) -> str:
     return request.build_absolute_uri(reverse(route_name))
 
 
-def _build_authorize_redirect_url(request: HttpRequest, code_challenge: str) -> str:
+def _ensure_demo_client_redirect_uri(redirect_uri: str) -> None:
+    """Keep the bundled demo client usable on the current development host."""
+    client, _ = Client.objects.get_or_create(
+        client_id=DEMO_CLIENT_ID,
+        defaults={
+            "name": "Bundled Demo Client",
+            "redirect_uris": redirect_uri,
+            "allowed_scopes": "openid profile",
+            "is_confidential": False,
+        },
+    )
+    redirect_uris = client.registered_redirect_uris()
+    if redirect_uri in redirect_uris:
+        return
+
+    redirect_uris.append(redirect_uri)
+    client.redirect_uris = "\n".join(redirect_uris)
+    client.save(update_fields=["redirect_uris"])
+
+
+def _build_authorize_redirect_url(
+    request: HttpRequest,
+    code_challenge: str,
+    state: str,
+    nonce: str,
+) -> str:
     """Build the authorization redirect URL using the current request host."""
+    redirect_uri = _build_absolute_url(request, "aot_callback")
+    _ensure_demo_client_redirect_uri(redirect_uri)
     query = urlencode(
         {
-            "client_id": "awesome-service",
-            "redirect_uri": _build_absolute_url(request, "aot_callback"),
+            "client_id": DEMO_CLIENT_ID,
+            "redirect_uri": redirect_uri,
             "response_type": "code",
-            "scope": "profile.read",
+            "scope": "openid profile",
+            "state": state,
+            "nonce": nonce,
             "code_challenge": code_challenge,
             "code_challenge_method": "S256",
         }
@@ -81,7 +127,7 @@ def _build_demo_flow_steps(request: HttpRequest) -> list[dict[str, str | bool]]:
         },
         {
             "title": "4. Read the protected profile",
-            "description": "The demo client calls the protected profile endpoint and renders the response.",
+            "description": "The demo client calls the protected userinfo endpoint and renders the response.",
             "href": reverse("aot_request_profile"),
             "status": bool(request.session.get("access_token")),
         },
@@ -99,10 +145,63 @@ def index(request: HttpRequest) -> HttpResponse:
                 "demo_flow_steps": _build_demo_flow_steps(request),
                 "access_token_present": bool(request.session.get("access_token")),
                 "refresh_token_present": bool(request.session.get("refresh_token")),
+                "id_token_present": bool(request.session.get("id_token")),
                 "pkce_verifier_present": bool(request.session.get("pkce_code_verifier")),
+                "state_present": bool(request.session.get("oidc_state")),
+                "nonce_present": bool(request.session.get("oidc_nonce")),
             },
         ),
         source="aot.index",
+    )
+
+
+def aot_token_viewer(request: HttpRequest) -> HttpResponse:
+    """Render token material stored in the current demo browser session."""
+    log_inbound_request(request)
+    token_rows = [
+        {
+            "label": "Access token",
+            "session_key": "access_token",
+            "value": request.session.get("access_token"),
+        },
+        {
+            "label": "Refresh token",
+            "session_key": "refresh_token",
+            "value": request.session.get("refresh_token"),
+        },
+        {
+            "label": "ID token",
+            "session_key": "id_token",
+            "value": request.session.get("id_token"),
+        },
+        {
+            "label": "PKCE verifier",
+            "session_key": "pkce_code_verifier",
+            "value": request.session.get("pkce_code_verifier"),
+        },
+        {
+            "label": "OIDC state",
+            "session_key": "oidc_state",
+            "value": request.session.get("oidc_state"),
+        },
+        {
+            "label": "OIDC nonce",
+            "session_key": "oidc_nonce",
+            "value": request.session.get("oidc_nonce"),
+        },
+    ]
+    visible_rows = [row for row in token_rows if row["value"]]
+    return log_response(
+        render(
+            request,
+            "aot/tokens.html",
+            {
+                "token_rows": token_rows,
+                "visible_rows": visible_rows,
+                "has_any_token_value": bool(visible_rows),
+            },
+        ),
+        source="aot.aot_token_viewer",
     )
 
 
@@ -129,7 +228,9 @@ def aot_callback(request: HttpRequest) -> HttpResponse:
     """Exchange an authorization code for tokens and store them in the session."""
     log_inbound_request(request)
     auth_code = request.GET.get("code")
+    returned_state = request.GET.get("state")
     code_verifier = request.session.get("pkce_code_verifier")
+    expected_state = request.session.get("oidc_state")
     if not auth_code:
         return log_response(
             render(
@@ -138,6 +239,38 @@ def aot_callback(request: HttpRequest) -> HttpResponse:
                 {
                     "callback_status": "Waiting for authorization response",
                     "callback_message": "Open this route through the authorize flow so it receives a `code` query parameter.",
+                    "query_params": request.GET.urlencode(),
+                },
+                status=400,
+            ),
+            source="aot.aot_callback",
+        )
+    if not returned_state or not expected_state or returned_state != expected_state:
+        LOGGER.warning(
+            "Invalid OIDC state on callback: %s",
+            json.dumps(
+                {
+                    "kind": "oidc_state_verification_failed",
+                    "path": request.path,
+                    "query_string": request.META.get("QUERY_STRING", ""),
+                    "returned_state": returned_state,
+                    "expected_state": expected_state,
+                    "auth_code_present": bool(auth_code),
+                    "session_key": request.session.session_key,
+                    "session_has_pkce_verifier": bool(code_verifier),
+                    "session_has_nonce": bool(request.session.get("oidc_nonce")),
+                    "session_cookie_present": request.COOKIES.get(settings.SESSION_COOKIE_NAME) is not None,
+                },
+                sort_keys=True,
+            ),
+        )
+        return log_response(
+            render(
+                request,
+                "aot/callback.html",
+                {
+                    "callback_status": "State verification failed",
+                    "callback_message": "The callback did not include the expected OIDC state value.",
                     "query_params": request.GET.urlencode(),
                 },
                 status=400,
@@ -163,7 +296,7 @@ def aot_callback(request: HttpRequest) -> HttpResponse:
     token_form_data = {
         "grant_type": "authorization_code",
         "code": auth_code,
-        "client_id": "awesome-service",
+        "client_id": DEMO_CLIENT_ID,
         "redirect_uri": _build_absolute_url(request, "aot_callback"),
         "code_verifier": code_verifier,
     }
@@ -234,7 +367,10 @@ def aot_callback(request: HttpRequest) -> HttpResponse:
 
     request.session["access_token"] = token_data["access_token"]
     request.session["refresh_token"] = token_data.get("refresh_token")
+    request.session["id_token"] = token_data.get("id_token")
     request.session.pop("pkce_code_verifier", None)
+    request.session.pop("oidc_state", None)
+    request.session.pop("oidc_nonce", None)
 
     return log_response(redirect("aot_request_profile"), source="aot.aot_callback")
 
@@ -250,14 +386,18 @@ def aot_request_profile(request: HttpRequest) -> HttpResponse:
 
     if not access_token:
         code_verifier = _generate_pkce_verifier()
+        state = _generate_state()
+        nonce = _generate_nonce()
         request.session["pkce_code_verifier"] = code_verifier
+        request.session["oidc_state"] = state
+        request.session["oidc_nonce"] = nonce
         code_challenge = _generate_pkce_challenge(code_verifier)
         return log_response(
-            redirect(_build_authorize_redirect_url(request, code_challenge)),
+            redirect(_build_authorize_redirect_url(request, code_challenge, state, nonce)),
             source="aot.aot_request_profile",
         )
 
-    profile_endpoint_url = _build_absolute_url(request, "profile")
+    profile_endpoint_url = _build_absolute_url(request, "userinfo")
     profile_request = Request(
         profile_endpoint_url,
         headers={"Authorization": f"Bearer {access_token}"},
@@ -291,12 +431,17 @@ def aot_request_profile(request: HttpRequest) -> HttpResponse:
     if profile_status == 401:
         request.session.pop("access_token", None)
         request.session.pop("refresh_token", None)
+        request.session.pop("id_token", None)
         code_verifier = _generate_pkce_verifier()
+        state = _generate_state()
+        nonce = _generate_nonce()
         request.session["pkce_code_verifier"] = code_verifier
+        request.session["oidc_state"] = state
+        request.session["oidc_nonce"] = nonce
         code_challenge = _generate_pkce_challenge(code_verifier)
 
         return log_response(
-            redirect(_build_authorize_redirect_url(request, code_challenge)),
+            redirect(_build_authorize_redirect_url(request, code_challenge, state, nonce)),
             source="aot.aot_request_profile",
         )
 
@@ -321,6 +466,7 @@ def aot_request_profile(request: HttpRequest) -> HttpResponse:
                 "response_status": profile_status,
                 "access_token_present": bool(request.session.get("access_token")),
                 "refresh_token_present": bool(request.session.get("refresh_token")),
+                "id_token_present": bool(request.session.get("id_token")),
             },
             status=profile_status,
         ),

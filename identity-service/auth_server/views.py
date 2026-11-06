@@ -1,15 +1,18 @@
-"""Views for the local identity provider.
+"""Views for the local OpenID Connect provider."""
 
-This app intentionally implements a compact subset of an OIDC/OAuth-style
-identity server so early-stage projects can exercise login, authorization-code,
-token, and profile retrieval flows during development and automated testing.
-"""
+from __future__ import annotations
 
 import base64
 import datetime
 import hashlib
+import json
+import logging
 import uuid
+from typing import Any
+from urllib.parse import urlencode, urlsplit, urlunsplit, parse_qsl
 
+from django.conf import settings
+from django.core.exceptions import ImproperlyConfigured
 from django.contrib.auth import login, logout
 from django.contrib.auth.forms import AuthenticationForm
 from django.contrib.auth.models import User
@@ -21,7 +24,12 @@ from django.views.decorators.csrf import csrf_exempt
 
 from config.http_logging import log_inbound_request, log_response
 
-from .models import AuthCode, Token, UserProfile
+from .models import AuthCode, Client, Token, UserProfile
+from .forms import RegistrationForm
+from .oidc import build_jwks, get_issuer, sign_jwt
+
+
+LOGGER = logging.getLogger("alt_identity.http")
 
 
 def _apply_login_field_ids(form: AuthenticationForm) -> AuthenticationForm:
@@ -49,6 +57,54 @@ def _wants_html(request: HttpRequest) -> bool:
     return "text/html" in accept
 
 
+def _parse_scopes(scope_value: str | None) -> set[str]:
+    if not scope_value:
+        return set()
+    return {scope for scope in scope_value.split() if scope}
+
+
+def _profile_claims(user: User, profile: UserProfile | None) -> dict[str, str]:
+    claims = {}
+
+    if user.first_name:
+        claims["given_name"] = user.first_name
+    if user.last_name:
+        claims["family_name"] = user.last_name
+
+    full_name = user.get_full_name()
+    if full_name:
+        claims["name"] = full_name
+
+    if profile and profile.learning_goal:
+        claims["learning_goal"] = profile.learning_goal
+
+    return claims
+
+
+def _append_query_params(url: str, params: dict[str, str]) -> str:
+    parsed = urlsplit(url)
+    query_params = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    query_params.update(params)
+    return urlunsplit(parsed._replace(query=urlencode(query_params)))
+
+
+def _oauth_error_response(
+    error: str,
+    description: str,
+    redirect_uri: str | None = None,
+    state: str | None = None,
+    status: int = 400,
+) -> HttpResponse:
+    payload = {"error": error, "error_description": description}
+    if state:
+        payload["state"] = state
+
+    if redirect_uri:
+        return HttpResponseRedirect(_append_query_params(redirect_uri, payload), status=302)
+
+    return JsonResponse(payload, status=status)
+
+
 def _endpoint_examples(request: HttpRequest) -> dict[str, str]:
     """Build stable endpoint examples for the demo templates."""
     authorize_url = request.build_absolute_uri(reverse("authorize"))
@@ -56,12 +112,37 @@ def _endpoint_examples(request: HttpRequest) -> dict[str, str]:
     return {
         "authorize_example": (
             f"{authorize_url}?client_id=awesome-service&redirect_uri={callback_url}"
-            "&response_type=code&scope=profile.read&code_challenge=demo-challenge"
-            "&code_challenge_method=S256"
+            "&response_type=code&scope=openid+profile&state=demo-state&nonce=demo-nonce"
+            "&code_challenge=demo-challenge&code_challenge_method=S256"
         ),
-        "token_url": request.build_absolute_uri(reverse("token")),
-        "profile_url": request.build_absolute_uri(reverse("profile")),
+        "userinfo_url": request.build_absolute_uri(reverse("userinfo")),
+        "configuration_url": request.build_absolute_uri(reverse("openid_configuration")),
     }
+
+
+def _load_client(client_id: str | None) -> Client | None:
+    if not client_id:
+        return None
+    return Client.objects.filter(client_id=client_id).first()
+
+
+def _redirect_uri_is_registered(client: Client | None, redirect_uri: str | None) -> bool:
+    return bool(client and redirect_uri and redirect_uri in client.registered_redirect_uris())
+
+
+def _build_id_token(user: User, auth_code: AuthCode) -> str:
+    issued_at = int(timezone.now().timestamp())
+    expires_at = issued_at + 3600
+    claims: dict[str, Any] = {
+        "iss": get_issuer(),
+        "sub": str(user.pk),
+        "aud": auth_code.client_id,
+        "exp": expires_at,
+        "iat": issued_at,
+    }
+    if auth_code.nonce:
+        claims["nonce"] = auth_code.nonce
+    return sign_jwt(claims)
 
 
 def login_view(request: HttpRequest) -> HttpResponse:
@@ -82,7 +163,6 @@ def login_view(request: HttpRequest) -> HttpResponse:
         )
 
     if request.method == "POST":
-        # process the request form
         form = _apply_login_field_ids(AuthenticationForm(request, data=request.POST))
 
         if form.is_valid():
@@ -97,207 +177,476 @@ def login_view(request: HttpRequest) -> HttpResponse:
                 )
 
             return log_response(redirect("/"), source="auth_server.login_view")
-        else:
-            return log_response(
-                render(
-                    request,
-                    "auth_server/login.html",
-                    {
-                        "form": form,
-                        "pending_authorization": request.session.get("pending_authorization"),
-                    },
-                ),
-                source="auth_server.login_view",
-            )
 
-    else:
         return log_response(
-            HttpResponseNotAllowed(["GET", "POST"]),
+            render(
+                request,
+                "auth_server/login.html",
+                {
+                    "form": form,
+                    "pending_authorization": request.session.get("pending_authorization"),
+                },
+            ),
             source="auth_server.login_view",
         )
 
+    return log_response(
+        HttpResponseNotAllowed(["GET", "POST"]),
+        source="auth_server.login_view",
+    )
 
-def authorize(request: HttpRequest) -> HttpResponse | None | HttpResponseRedirect | HttpResponseNotAllowed:
-    """Issue a single-use authorization code for an authenticated user.
 
-    The request is deliberately small in scope and expects the standard query
-    parameters used by the demo client: ``client_id``, ``redirect_uri``,
-    ``response_type=code``, and an optional ``scope`` string.
-    """
+def register_view(request: HttpRequest) -> HttpResponse:
+    """Render the browser client for the test registration API."""
     log_inbound_request(request)
-    client_id = request.GET.get("client_id")
-    redirect_uri = request.GET.get("redirect_uri")
-    response_type = request.GET.get("response_type")
-    scope = request.GET.get("scope")
-    code_challenge = request.GET.get("code_challenge")
-    code_challenge_method = request.GET.get("code_challenge_method")
-
     if request.method == "GET":
-        if not any([client_id, redirect_uri, response_type, scope, code_challenge, code_challenge_method]):
-            return log_response(
-                render(
-                    request,
-                    "auth_server/authorize.html",
-                    {
-                        "endpoint_examples": _endpoint_examples(request),
-                        "request_params": [],
-                    },
-                ),
-                source="auth_server.authorize",
-            )
+        return log_response(
+            render(
+                request,
+                "auth_server/register.html",
+                {
+                    "pending_authorization": request.session.get("pending_authorization"),
+                },
+            ),
+            source="auth_server.register_view",
+        )
 
-        if request.user.is_authenticated:
-            if not client_id:
-                return log_response(HttpResponse("Client ID not provided", status=400), source="auth_server.authorize")
-            if response_type != "code":
-                return log_response(HttpResponse("Incorrect response type", status=400), source="auth_server.authorize")
-            if not redirect_uri:
-                return log_response(HttpResponse("Redirect URL not provided", status=400), source="auth_server.authorize")
-            if code_challenge and not code_challenge_method:
-                return log_response(HttpResponse("Code challenge method not provided", status=400), source="auth_server.authorize")
-            if code_challenge_method and code_challenge_method not in {"plain", "S256"}:
-                return log_response(HttpResponse("Unsupported code challenge method", status=400), source="auth_server.authorize")
-            if code_challenge_method and not code_challenge:
-                return log_response(HttpResponse("Code challenge not provided", status=400), source="auth_server.authorize")
+    return log_response(
+        HttpResponseNotAllowed(["GET"]),
+        source="auth_server.register_view",
+    )
 
-            auth_code = uuid.uuid4().hex
 
-            AuthCode.objects.create(
-                user_name = request.user.username,
-                client_id = client_id,
-                scope = scope,
-                expiry = timezone.now() + datetime.timedelta(minutes=5),
-                auth_code = auth_code,
-                redirect_uri = redirect_uri,
-                code_challenge=code_challenge,
-                code_challenge_method=code_challenge_method,
-            ).save()
+def _registration_api_error(
+    error: str,
+    description: str,
+    status: int,
+    **extra: Any,
+) -> JsonResponse:
+    """Return a consistently JSON-shaped test-registration API error."""
+    return JsonResponse(
+        {"error": error, "error_description": description, **extra},
+        status=status,
+    )
 
-            return log_response(
-                redirect(f"{redirect_uri}?code={auth_code}"),
-                source="auth_server.authorize",
-            )
 
-        else:
-            # redirect to login page
-            request.session["pending_authorization"] = request.get_full_path()
-            return log_response(
-                redirect(f"{reverse('login')}"),
-                source="auth_server.authorize",
-            )
+@csrf_exempt
+def register_api(request: HttpRequest) -> JsonResponse:
+    """Create and authenticate a test user from a JSON request when enabled."""
+    log_inbound_request(request)
 
-    else:
+    if not settings.ALT_IDENTITY_TEST_REGISTRATION_API_ENABLED:
+        return log_response(
+            _registration_api_error(
+                "not_found",
+                "Test registration API is disabled.",
+                status=404,
+            ),
+            source="auth_server.register_api",
+        )
+
+    if request.method != "POST":
+        response = _registration_api_error(
+            "method_not_allowed",
+            "Only POST is supported.",
+            status=405,
+        )
+        response["Allow"] = "POST"
+        return log_response(response, source="auth_server.register_api")
+
+    if request.content_type != "application/json":
+        return log_response(
+            _registration_api_error(
+                "unsupported_media_type",
+                "Content-Type must be application/json.",
+                status=415,
+            ),
+            source="auth_server.register_api",
+        )
+
+    try:
+        payload = json.loads(request.body)
+    except json.JSONDecodeError:
+        payload = None
+
+    if not isinstance(payload, dict):
+        return log_response(
+            _registration_api_error(
+                "invalid_request",
+                "Request body must be a JSON object.",
+                status=400,
+            ),
+            source="auth_server.register_api",
+        )
+
+    required_fields = ("username", "first_name", "last_name", "password")
+    if any(not isinstance(payload.get(field), str) for field in required_fields):
+        return log_response(
+            _registration_api_error(
+                "invalid_request",
+                "username, first_name, last_name, and password must be strings.",
+                status=400,
+            ),
+            source="auth_server.register_api",
+        )
+
+    learning_goal = payload.get("learning_goal", "")
+    if not isinstance(learning_goal, str):
+        return log_response(
+            _registration_api_error(
+                "invalid_request",
+                "learning_goal must be a string when provided.",
+                status=400,
+            ),
+            source="auth_server.register_api",
+        )
+
+    form = RegistrationForm(
+        {
+            "username": payload["username"],
+            "first_name": payload["first_name"],
+            "last_name": payload["last_name"],
+            "learning_goal": learning_goal,
+            "password1": payload["password"],
+            "password2": payload["password"],
+        }
+    )
+    if not form.is_valid():
+        return log_response(
+            _registration_api_error(
+                "invalid_request",
+                "Registration details are invalid.",
+                status=400,
+                errors=form.errors.get_json_data(),
+            ),
+            source="auth_server.register_api",
+        )
+
+    user = form.save()
+    login(request, user)
+    profile = UserProfile.objects.get(user=user)
+    next_url = request.session.pop("pending_authorization", "/")
+    response = JsonResponse(
+        {
+            "id": str(user.pk),
+            "username": user.username,
+            **_profile_claims(user, profile),
+            "next_url": next_url,
+        },
+        status=201,
+    )
+    return log_response(response, source="auth_server.register_api")
+
+
+def authorize(request: HttpRequest) -> HttpResponse | HttpResponseRedirect | HttpResponseNotAllowed:
+    """Issue a single-use authorization code for an authenticated user."""
+    log_inbound_request(request)
+    if request.method != "GET":
         return log_response(
             HttpResponseNotAllowed(["GET"]),
             source="auth_server.authorize",
         )
+
+    if not request.GET:
+        return log_response(
+            render(
+                request,
+                "auth_server/authorize.html",
+                {
+                    "endpoint_examples": _endpoint_examples(request),
+                    "request_params": [],
+                },
+            ),
+            source="auth_server.authorize",
+        )
+
+    client_id = request.GET.get("client_id")
+    redirect_uri = request.GET.get("redirect_uri")
+    response_type = request.GET.get("response_type")
+    scope = request.GET.get("scope")
+    state = request.GET.get("state")
+    nonce = request.GET.get("nonce")
+    code_challenge = request.GET.get("code_challenge")
+    code_challenge_method = request.GET.get("code_challenge_method")
+
+    client = _load_client(client_id)
+    if not client:
+        return log_response(
+            _oauth_error_response("invalid_client", "Unknown client_id.", status=400),
+            source="auth_server.authorize",
+        )
+
+    if not _redirect_uri_is_registered(client, redirect_uri):
+        return log_response(
+            _oauth_error_response("invalid_request", "Unregistered redirect_uri.", status=400),
+            source="auth_server.authorize",
+        )
+
+    requested_scopes = _parse_scopes(scope)
+    allowed_scopes = client.allowed_scope_set()
+
+    if response_type != "code":
+        return log_response(
+            _oauth_error_response(
+                "unsupported_response_type",
+                "Only response_type=code is supported.",
+                redirect_uri=redirect_uri,
+                state=state,
+            ),
+            source="auth_server.authorize",
+        )
+    if not state:
+        return log_response(
+            _oauth_error_response(
+                "invalid_request",
+                "Missing required state parameter.",
+                redirect_uri=redirect_uri,
+            ),
+            source="auth_server.authorize",
+        )
+    if "openid" not in requested_scopes:
+        return log_response(
+            _oauth_error_response(
+                "invalid_scope",
+                "The openid scope is required.",
+                redirect_uri=redirect_uri,
+                state=state,
+            ),
+            source="auth_server.authorize",
+        )
+    if not requested_scopes.issubset(allowed_scopes):
+        return log_response(
+            _oauth_error_response(
+                "invalid_scope",
+                "One or more requested scopes are not allowed for this client.",
+                redirect_uri=redirect_uri,
+                state=state,
+            ),
+            source="auth_server.authorize",
+        )
+    if not nonce:
+        return log_response(
+            _oauth_error_response(
+                "invalid_request",
+                "Missing required nonce parameter.",
+                redirect_uri=redirect_uri,
+                state=state,
+            ),
+            source="auth_server.authorize",
+        )
+    if not client.is_confidential and not code_challenge:
+        return log_response(
+            _oauth_error_response(
+                "invalid_request",
+                "Public clients must send a PKCE code_challenge.",
+                redirect_uri=redirect_uri,
+                state=state,
+            ),
+            source="auth_server.authorize",
+        )
+    if code_challenge and not code_challenge_method:
+        return log_response(
+            _oauth_error_response(
+                "invalid_request",
+                "Code challenge method not provided.",
+                redirect_uri=redirect_uri,
+                state=state,
+            ),
+            source="auth_server.authorize",
+        )
+    if code_challenge_method and code_challenge_method not in {"plain", "S256"}:
+        return log_response(
+            _oauth_error_response(
+                "invalid_request",
+                "Unsupported code challenge method.",
+                redirect_uri=redirect_uri,
+                state=state,
+            ),
+            source="auth_server.authorize",
+        )
+
+    if not request.user.is_authenticated:
+        request.session["pending_authorization"] = request.get_full_path()
+        LOGGER.info(
+            "OIDC authorization pending login: %s",
+            json.dumps(
+                {
+                    "kind": "oidc_authorization_pending_login",
+                    "client_id": client.client_id,
+                    "redirect_uri": redirect_uri,
+                    "state": state,
+                    "nonce_present": bool(nonce),
+                    "code_challenge_method": code_challenge_method,
+                    "session_key": request.session.session_key,
+                    "session_cookie_present": bool(request.COOKIES.get(settings.SESSION_COOKIE_NAME)),
+                    "pending_authorization": request.session.get("pending_authorization"),
+                },
+                sort_keys=True,
+            ),
+        )
+        return log_response(
+            redirect(reverse("login")),
+            source="auth_server.authorize",
+        )
+
+    auth_code = uuid.uuid4().hex
+    AuthCode.objects.create(
+        user_name=request.user.username,
+        client_id=client.client_id,
+        scope=" ".join(sorted(requested_scopes)),
+        expiry=timezone.now() + datetime.timedelta(minutes=5),
+        auth_code=auth_code,
+        redirect_uri=redirect_uri,
+        code_challenge=code_challenge,
+        code_challenge_method=code_challenge_method,
+        state=state,
+        nonce=nonce,
+    ).save()
+    callback_url = _append_query_params(redirect_uri, {"code": auth_code, "state": state})
+
+    LOGGER.info(
+        "OIDC authorization redirect issued: %s",
+        json.dumps(
+            {
+                "kind": "oidc_authorization_redirect_issued",
+                "client_id": client.client_id,
+                "redirect_uri": redirect_uri,
+                "callback_url": callback_url,
+                "state": state,
+                "nonce_present": bool(nonce),
+                "scope": " ".join(sorted(requested_scopes)),
+                "code_challenge_method": code_challenge_method,
+                "auth_code": auth_code,
+                "user": request.user.username,
+                "session_key": request.session.session_key,
+                "session_cookie_present": bool(request.COOKIES.get(settings.SESSION_COOKIE_NAME)),
+            },
+            sort_keys=True,
+        ),
+    )
+
+    return log_response(
+        redirect(callback_url),
+        source="auth_server.authorize",
+    )
 
 
 @csrf_exempt
 def token(request: HttpRequest) -> HttpResponse:
     """Exchange a valid authorization code for bearer-style token data."""
     log_inbound_request(request)
-    if request.method == "GET":
+    if request.method != "POST":
         return log_response(
-            render(
-                request,
-                "auth_server/token.html",
-                {
-                    "endpoint_examples": _endpoint_examples(request),
-                },
-            ),
+            HttpResponseNotAllowed(["POST"]),
             source="auth_server.token",
         )
 
-    if request.method == "POST":
-        grant_type = request.POST.get("grant_type")
-        code = request.POST.get("code")
-        redirect_uri = request.POST.get("redirect_uri")
-        client_id = request.POST.get("client_id")
-        code_verifier = request.POST.get("code_verifier")
+    grant_type = request.POST.get("grant_type")
+    code = request.POST.get("code")
+    redirect_uri = request.POST.get("redirect_uri")
+    client_id = request.POST.get("client_id")
+    code_verifier = request.POST.get("code_verifier")
 
-        now = timezone.now()
+    if grant_type != "authorization_code":
+        return log_response(
+            JsonResponse({"error": "unsupported_grant_type"}, status=400),
+            source="auth_server.token",
+        )
 
-        if grant_type != "authorization_code":
+    client = _load_client(client_id)
+    if not _redirect_uri_is_registered(client, redirect_uri):
+        return log_response(
+            JsonResponse({"error": "invalid_client"}, status=400),
+            source="auth_server.token",
+        )
+
+    now = timezone.now()
+    authentication = AuthCode.objects.filter(
+        auth_code=code,
+        client_id=client_id,
+        used=False,
+        expiry__gt=now,
+        redirect_uri=redirect_uri,
+    ).first()
+
+    if not authentication:
+        return log_response(
+            JsonResponse({"error": "invalid_grant"}, status=400),
+            source="auth_server.token",
+        )
+
+    if authentication.code_challenge:
+        if not code_verifier:
+            return log_response(
+                JsonResponse({"error": "invalid_request"}, status=400),
+                source="auth_server.token",
+            )
+
+        expected_challenge = _create_pkce_challenge(
+            code_verifier,
+            authentication.code_challenge_method or "plain",
+        )
+        if expected_challenge is None or expected_challenge != authentication.code_challenge:
             return log_response(
                 JsonResponse({"error": "invalid_grant"}, status=400),
                 source="auth_server.token",
             )
 
-        authentication = AuthCode.objects.filter(
-            auth_code=code,
-            client_id=client_id,
-            used=False,
-            expiry__gt=now,
-            redirect_uri=redirect_uri
-        ).first()
+    authentication.used = True
+    authentication.save()
 
-        if authentication:
-            if authentication.code_challenge:
-                if not code_verifier:
-                    return log_response(
-                        JsonResponse({"error": "invalid_request"}, status=400),
-                        source="auth_server.token",
-                    )
+    new_token = Token.objects.create(
+        access_token=uuid.uuid4().hex,
+        refresh_token=uuid.uuid4().hex,
+        token_type="Bearer",
+        user_name=authentication.user_name,
+        client_id=client.client_id,
+        expires_in=3600,
+        scope=authentication.scope,
+    )
+    new_token.save()
 
-                expected_challenge = _create_pkce_challenge(
-                    code_verifier,
-                    authentication.code_challenge_method or "plain",
-                )
-                if expected_challenge is None or expected_challenge != authentication.code_challenge:
-                    return log_response(
-                        JsonResponse({"error": "invalid_grant"}, status=400),
-                        source="auth_server.token",
-                    )
+    response_body: dict[str, Any] = {
+        "access_token": new_token.access_token,
+        "refresh_token": new_token.refresh_token,
+        "token_type": new_token.token_type,
+        "expires_in": new_token.expires_in,
+        "scope": new_token.scope,
+    }
 
-            authentication.used = True
-            authentication.save()
-
-            new_token = Token.objects.create(
-                access_token = uuid.uuid4().hex,
-                refresh_token = uuid.uuid4().hex,
-                token_type ="Bearer",
-                user_name = authentication.user_name,
-                client_id = client_id,
-                expires_in = 3600,
-                scope = authentication.scope
-
-            )
-            new_token.save()
-
+    if "openid" in _parse_scopes(authentication.scope):
+        user = User.objects.filter(username=authentication.user_name).first()
+        if not user:
             return log_response(
-                JsonResponse({
-                    "access_token": new_token.access_token,
-                    "refresh_token": new_token.refresh_token,
-                    "token_type": new_token.token_type,
-                    "expires_in": new_token.expires_in,
-                    "scope": new_token.scope
-                }),
+                JsonResponse({"error": "server_error"}, status=500),
                 source="auth_server.token",
             )
-
-        else:
+        try:
+            response_body["id_token"] = _build_id_token(user, authentication)
+        except ImproperlyConfigured:
             return log_response(
-                JsonResponse({"error": "invalid_grant"}, status=400),
+                JsonResponse({"error": "server_error"}, status=500),
                 source="auth_server.token",
             )
 
     return log_response(
-        HttpResponseNotAllowed(["POST"]),
+        JsonResponse(response_body),
         source="auth_server.token",
     )
 
 
-def request_profile_details(request: HttpRequest) -> HttpResponse:
-    """Return the authenticated user's simple profile as JSON.
-
-    This endpoint expects a bearer token in the ``Authorization`` header and
-    currently exposes only the username and ``learning_goal`` fields.
-    """
+def userinfo(request: HttpRequest) -> HttpResponse:
+    """Return the authenticated user's OIDC userinfo document."""
     log_inbound_request(request)
     authorization = request.headers.get("Authorization")
 
-    if request.method == "GET" and not authorization and _wants_html(request):
+    if request.method != "GET":
+        return log_response(
+            HttpResponseNotAllowed(["GET"]),
+            source="auth_server.userinfo",
+        )
+
+    if not authorization and _wants_html(request):
         return log_response(
             render(
                 request,
@@ -306,53 +655,103 @@ def request_profile_details(request: HttpRequest) -> HttpResponse:
                     "endpoint_examples": _endpoint_examples(request),
                 },
             ),
-            source="auth_server.request_profile_details",
+            source="auth_server.userinfo",
         )
 
     if not authorization:
-        return log_response(
-            JsonResponse({"error": "missing_authorization_header"}, status=401),
-            source="auth_server.request_profile_details",
-        )
+        response = JsonResponse({"error": "missing_authorization_header"}, status=401)
+        response["WWW-Authenticate"] = 'Bearer error="invalid_token"'
+        return log_response(response, source="auth_server.userinfo")
 
     if not authorization.startswith("Bearer "):
-        return log_response(
-            JsonResponse({"error": "invalid_authorization_header"}, status=401),
-            source="auth_server.request_profile_details",
-        )
+        response = JsonResponse({"error": "invalid_authorization_header"}, status=401)
+        response["WWW-Authenticate"] = 'Bearer error="invalid_token"'
+        return log_response(response, source="auth_server.userinfo")
 
     requested_token = authorization.removeprefix("Bearer ").strip()
-
     auth_token = Token.objects.filter(access_token=requested_token).first()
 
-    if not auth_token:
-        return log_response(
-            JsonResponse({"error": "invalid_token"}, status=401),
-            source="auth_server.request_profile_details",
-        )
+    if not auth_token or auth_token.is_expired():
+        response = JsonResponse({"error": "invalid_token"}, status=401)
+        response["WWW-Authenticate"] = 'Bearer error="invalid_token"'
+        return log_response(response, source="auth_server.userinfo")
+
+    if "openid" not in _parse_scopes(auth_token.scope):
+        response = JsonResponse({"error": "insufficient_scope"}, status=403)
+        response["WWW-Authenticate"] = 'Bearer error="insufficient_scope", scope="openid"'
+        return log_response(response, source="auth_server.userinfo")
 
     user = User.objects.filter(username=auth_token.user_name).first()
-
     if not user:
         return log_response(
             JsonResponse({"error": "user_not_found"}, status=404),
-            source="auth_server.request_profile_details",
+            source="auth_server.userinfo",
         )
 
     profile = UserProfile.objects.filter(user=user).first()
-
-    if not profile:
-        return log_response(
-            JsonResponse({"error": "profile_not_found"}, status=404),
-            source="auth_server.request_profile_details",
-        )
+    claims: dict[str, str] = {
+        "sub": str(user.pk),
+        "preferred_username": user.username,
+    }
+    if "profile" in _parse_scopes(auth_token.scope):
+        claims.update(_profile_claims(user, profile))
 
     return log_response(
-        JsonResponse({
-            "user_name": profile.user.username,
-            "learning_goal": profile.learning_goal,
-        }),
-        source="auth_server.request_profile_details",
+        JsonResponse(claims),
+        source="auth_server.userinfo",
+    )
+
+
+def openid_configuration(request: HttpRequest) -> HttpResponse:
+    """Publish OIDC discovery metadata."""
+    log_inbound_request(request)
+    if request.method != "GET":
+        return log_response(
+            HttpResponseNotAllowed(["GET"]),
+            source="auth_server.openid_configuration",
+        )
+
+    issuer = get_issuer()
+    metadata = {
+        "issuer": issuer,
+        "authorization_endpoint": f"{issuer}{reverse('authorize')}",
+        "token_endpoint": f"{issuer}{reverse('token')}",
+        "userinfo_endpoint": f"{issuer}{reverse('userinfo')}",
+        "jwks_uri": f"{issuer}{reverse('jwks')}",
+        "scopes_supported": ["openid", "profile"],
+        "response_types_supported": ["code"],
+        "grant_types_supported": ["authorization_code"],
+        "subject_types_supported": ["public"],
+        "id_token_signing_alg_values_supported": ["RS256"],
+        "token_endpoint_auth_methods_supported": ["none"],
+        "code_challenge_methods_supported": ["plain", "S256"],
+        "claims_supported": ["sub", "preferred_username", "name", "given_name", "family_name", "learning_goal"],
+    }
+    return log_response(
+        JsonResponse(metadata),
+        source="auth_server.openid_configuration",
+    )
+
+
+def jwks(request: HttpRequest) -> HttpResponse:
+    """Publish the public signing key as JWKS."""
+    log_inbound_request(request)
+    if request.method != "GET":
+        return log_response(
+            HttpResponseNotAllowed(["GET"]),
+            source="auth_server.jwks",
+        )
+
+    try:
+        document = build_jwks()
+    except ImproperlyConfigured:
+        return log_response(
+            JsonResponse({"error": "server_error"}, status=500),
+            source="auth_server.jwks",
+        )
+    return log_response(
+        JsonResponse(document),
+        source="auth_server.jwks",
     )
 
 
