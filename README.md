@@ -75,7 +75,8 @@ ALT-Identity/
 ├── README.md
 ├── docs/
 │   ├── architecture.md
-│   └── integration-guide.md
+│   ├── integration-guide.md
+│   └── project-spec.md
 └── identity-service/
     ├── manage.py
     ├── config/
@@ -98,7 +99,8 @@ ALT-Identity/
 6. The bundled demo client stores the returned access, refresh, and ID tokens in session and requests `/auth/userinfo` with a bearer token.
 7. The userinfo response is rendered as HTML for humans and automation tooling.
 
-More detail is in [docs/architecture.md](docs/architecture.md).
+More detail is in [docs/architecture.md](docs/architecture.md) and the
+[project specification](docs/project-spec.md).
 
 ## Quick Start
 
@@ -410,3 +412,4 @@ Common next steps if you want to integrate this into a larger local platform:
 
 - [Architecture overview](docs/architecture.md)
 - [Integration guide](docs/integration-guide.md)
+- [Project specification](docs/project-spec.md)
